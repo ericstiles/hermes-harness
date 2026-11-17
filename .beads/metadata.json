@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "hermes_harness",
+  "project_id": "b5ae2082-60f6-4ea2-ba03-f1086876dee0"
+}

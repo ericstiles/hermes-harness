@@ -33,11 +33,9 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/classify.sh"
 
 MAX=${1:-10}
-# Default owner/name from the origin remote (git@host:o/n.git or https://host/o/n.git)
-if [ -z "${GITHUB_REPO:-}" ]; then
-  GITHUB_REPO=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -E 's#^.*[:/]([^/:]+/[^/]+)$#\1#; s#\.git$##')
-fi
-REPO=${GITHUB_REPO:?set GITHUB_REPO=owner/name (no git origin remote found)}
+# owner/name: $GITHUB_REPO, else parsed from the origin remote (see lib/common.sh)
+hh_github_repo || { echo "GITHUB_REPO is not set and no origin remote was found in $REPO_ROOT. Fix: export GITHUB_REPO=owner/name, or git remote add origin <url>" >&2; exit 2; }
+REPO=$GITHUB_REPO
 NAME=${REPO##*/}
 TIMEOUT=${RUN_TIMEOUT:-90m}
 RETRY=${HERMES_RETRY_ON_TIMEOUT:-0}

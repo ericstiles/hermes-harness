@@ -50,11 +50,29 @@ out=$(cd "$tmp" && "$BIN/hermes-supervise" 2>&1)
 echo "$out" | grep -q '^ACTION=ASK_HUMAN$' && ok "supervise outside a git repo asks the human" || bad "no repo" "$out"
 
 # --- launch: refusals and repo-agnostic command ---
+# herdr/tmux are stubbed to fail so a test can never open a real tab or session.
+mkdir -p "$tmp/nohost"; for c in herdr tmux; do printf '#!/bin/sh\necho "STUB %s called: $*" >> "%s/host_calls.log"\nexit 1\n' "$c" "$tmp" > "$tmp/nohost/$c"; chmod +x "$tmp/nohost/$c"; done
+export PATH="$tmp/nohost:$PATH"
 out=$(cd "$W" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 1 ] && echo "$out" | grep -q GH_TOKEN && ok "launch refuses without GH_TOKEN" || bad "launch token refusal" "$rc $out"
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1)
 echo "$out" | grep -q "cd '$W' &&" && echo "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "launch targets the current repo with an absolute hermes-run" || bad "launch cmd" "$out"
-echo "$out" | grep -q 'GITHUB_REPO=' && bad "launch hardcodes repo" "$out" || ok "launch dry-run has no hardcoded repo"
+echo "$out" | grep -q "GITHUB_REPO='acme/widgets'" && ok "launch resolves GITHUB_REPO from origin and shows it in the command" || bad "launch GITHUB_REPO shown" "$out"
+echo "$out" | grep -q 'ericstiles' && bad "launch hardcodes repo" "$out" || ok "launch dry-run has no hardcoded repo"
+# GITHUB_REPO that cannot be resolved must fail the dry-run, not just the real run
+NR="$tmp/norigin"; mkdir -p "$NR"; git -C "$NR" init -q -b main
+out=$(cd "$NR" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
+[ $rc -eq 1 ] && ok "dry-run exits 1 when GITHUB_REPO cannot be resolved" || bad "dry-run unresolved rc" "$rc $out"
+echo "$out" | grep -q 'GITHUB_REPO is not set' && echo "$out" | grep -q 'export GITHUB_REPO=owner/name' && echo "$out" | grep -q 'git remote add origin' && ok "dry-run says GITHUB_REPO must be set and how" || bad "dry-run unresolved msg" "$out"
+echo "$out" | grep -q 'DRY RUN: would start' && bad "dry-run printed a launch command despite the error" "$out" || ok "no launch command printed when a prerequisite is missing"
+out=$(cd "$NR" && GITHUB_REPO=acme/override GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1)
+echo "$out" | grep -q "GITHUB_REPO='acme/override'" && ok "explicit GITHUB_REPO wins over origin" || bad "override" "$out"
+# every missing prerequisite is reported at once
+out=$(cd "$NR" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1)
+echo "$out" | grep -q 'GITHUB_REPO is not set' && echo "$out" | grep -q 'GH_TOKEN is not set' && ok "dry-run lists all missing prerequisites together" || bad "all problems" "$out"
+# a real launch is refused the same way and records nothing
+out=$(cd "$NR" && GH_TOKEN=x "$BIN/hermes-launch" 2>&1); rc=$?
+[ $rc -eq 1 ] && [ ! -e "$NR/logs/.relaunches" ] && [ ! -e "$tmp/host_calls.log" ] && ok "real launch refused without GITHUB_REPO and records nothing" || bad "real launch unresolved" "$rc $out"
 out=$(cd "$tmp" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 2 ] && echo "$out" | grep -q 'not inside a git repo' && ok "launch refuses outside a git repo" || bad "launch no repo" "$rc $out"
 

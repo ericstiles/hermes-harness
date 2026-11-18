@@ -20,3 +20,12 @@ hh_repo() { # -> sets REPO_ROOT and LOG_DIR; returns 2 when no target repo
 
 # Processes that mean "a Hermes run is active" (one local model: one run at a time, across repos).
 HH_ACTIVE_PATTERN='hermes-run|hermes chat'
+
+# GITHUB_REPO (owner/name): explicit env wins, else parsed from the origin remote
+# (git@host:o/n.git, https://host/o/n.git, https://host/o/n). Returns 1 if unknown.
+hh_github_repo() { # needs REPO_ROOT; exports GITHUB_REPO
+  if [ -z "${GITHUB_REPO:-}" ]; then
+    GITHUB_REPO=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -E 's#^.*[:/]([^/:]+/[^/]+)$#\1#; s#\.git$##')
+  fi
+  [ -n "$GITHUB_REPO" ] && export GITHUB_REPO
+}

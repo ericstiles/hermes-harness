@@ -41,16 +41,21 @@ Options:
 WHAT HAPPENS
   1. Finds the target repo: $HERMES_REPO if set, else the git toplevel of the
      current directory. Stops with an error if neither is a git repo.
-  2. Refuses to start (exit 1) if GH_TOKEN is not set in the environment.
-     Load it with direnv from the repo's .envrc.local. The token is never
-     written to a file, printed, or put on a command line.
-  3. Refuses to start (exit 1) if a hermes-run or "hermes chat" process is
-     already running in ANY repo. There is one local model, so one run at a time.
+  2. Works out GITHUB_REPO (owner/name): the environment value if set, else
+     parsed from the repo's origin remote.
+  3. Checks every prerequisite and refuses to start (exit 1), listing ALL
+     problems at once, if any is missing. --dry-run runs the same checks, so a
+     dry run fails exactly when a real launch would:
+       - GITHUB_REPO unknown (no env value and no origin remote)
+       - GH_TOKEN not set. Load it with direnv from the repo's .envrc.local.
+         The token is never written to a file, printed, or put on a command line.
+       - a hermes-run or "hermes chat" process already running in ANY repo
+         (one local model, so one run at a time)
   4. Creates <repo>/logs and appends one line "YYYYMMDD REASON ISSUE" to
      <repo>/logs/.relaunches (the relaunch counter hermes-supervise reads).
   5. Opens a new herdr tab named "hermes-run" in the current workspace, with
      its working directory set to the repo, and types this into it:
-         cd '<repo>' && [GITHUB_REPO=..] [RUN_TIMEOUT=..] '<harness>/bin/hermes-run' N
+         cd '<repo>' && GITHUB_REPO='<owner/name>' [RUN_TIMEOUT=..] '<harness>/bin/hermes-run' N
      If herdr is not usable it falls back to a detached tmux session named
      "hermes-run" (attach with: tmux attach -t hermes-run). If neither works
      it exits 1.
@@ -65,8 +70,8 @@ WHAT HAPPENS
 
 ENVIRONMENT
   GH_TOKEN       required. Fine-grained token for the target repo only.
-  GITHUB_REPO    optional owner/name; default is parsed from the repo's origin
-                 remote. Set it if origin is a fork or has no GitHub URL.
+  GITHUB_REPO    owner/name. Optional if the repo has an origin remote (it is
+                 parsed from it); required otherwise. Set it if origin is a fork.
   HERMES_REPO    optional path of the target repo instead of the current dir.
   HERMES_LOG_DIR optional; default <repo>/logs.
   RUN_TIMEOUT    optional; --timeout overrides it. Other hermes-run settings
@@ -75,7 +80,8 @@ ENVIRONMENT
 
 EXIT STATUS
   0  started (or --dry-run, or --help)
-  1  not started: no GH_TOKEN, a run is already active, or no herdr/tmux
+  1  not started: GITHUB_REPO unknown, no GH_TOKEN, a run is already
+     active, or no herdr/tmux
   2  bad usage: unknown option, or not inside a git repo
 
 EXAMPLES
@@ -100,12 +106,23 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "${GH_TOKEN:-}" ] || { echo "GH_TOKEN is not set (run: direnv allow, or export it). Not starting." >&2; exit 1; }
+# Check every prerequisite and report ALL problems at once, in --dry-run too, so a
+# dry run fails exactly when a real launch would.
+problems=""
+hh_github_repo || problems="$problems
+  - GITHUB_REPO is not set and $REPO_ROOT has no origin remote to read it from.
+    Fix: export GITHUB_REPO=owner/name   (or: git remote add origin <url>)"
+[ -n "${GH_TOKEN:-}" ] || problems="$problems
+  - GH_TOKEN is not set (run: direnv allow, or export it)."
 if ps -axo command | grep -E "$HH_ACTIVE_PATTERN" | grep -v grep | grep -qv hermes-launch; then
-  echo "A hermes-run / hermes chat process is already running. Not starting." >&2; exit 1
+  problems="$problems
+  - A hermes-run / hermes chat process is already running (one run at a time)."
+fi
+if [ -n "$problems" ]; then
+  echo "Not starting. Missing or blocking:$problems" >&2; exit 1
 fi
 # Absolute path to hermes-run so the new tab's shell does not depend on PATH.
-cmd="cd '$REPO_ROOT' && ${GITHUB_REPO:+GITHUB_REPO='$GITHUB_REPO'} ${TO:+RUN_TIMEOUT='$TO'} '$HARNESS_HOME/bin/hermes-run' $MAX"
+cmd="cd '$REPO_ROOT' && GITHUB_REPO='$GITHUB_REPO' ${TO:+RUN_TIMEOUT='$TO'} '$HARNESS_HOME/bin/hermes-run' $MAX"
 if [ "$DRY" = 1 ]; then echo "DRY RUN: would start in herdr/tmux tab hermes-run: $cmd"; exit 0; fi
 mkdir -p "$LOG_DIR"
 printf '%s %s %s\n' "$(date +%Y%m%d)" "$REASON" "$ISSUE" >> "$LOG_DIR/.relaunches"

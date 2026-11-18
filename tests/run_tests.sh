@@ -58,6 +58,20 @@ echo "$out" | grep -q 'GITHUB_REPO=' && bad "launch hardcodes repo" "$out" || ok
 out=$(cd "$tmp" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 2 ] && echo "$out" | grep -q 'not inside a git repo' && ok "launch refuses outside a git repo" || bad "launch no repo" "$rc $out"
 
+rm -rf "$W/logs"; (cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run >/dev/null 2>&1)
+[ ! -e "$W/logs" ] && ok "--dry-run creates nothing in the repo" || bad "dry-run side effect" "$(ls -a "$W/logs")"
+# --- launch --help / -h: detailed, no side effects, works anywhere without a token ---
+for flag in -h --help; do
+  out=$(cd "$tmp" && env -u GH_TOKEN "$BIN/hermes-launch" "$flag" 2>&1); rc=$?
+  [ $rc -eq 0 ] && ok "launch $flag exits 0 outside a repo without GH_TOKEN" || bad "launch $flag rc" "$rc $out"
+  for want in 'Usage:' '--timeout' '--reason' '--issue' '--max' '--dry-run' 'GH_TOKEN' 'GITHUB_REPO' 'HERMES_REPO' 'herdr' 'tmux' 'WHAT HAPPENS' 'EXIT STATUS' 'EXAMPLES'; do
+    echo "$out" | grep -q -- "$want" && ok "launch $flag mentions $want" || bad "launch $flag missing $want" "$out"
+  done
+done
+out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --timeout 5m --help 2>&1)
+echo "$out" | grep -q 'WHAT HAPPENS' && ok "--help wins over other flags (nothing is launched)" || bad "help with flags" "$out"
+[ ! -e "$W/logs/.relaunches" ] && ok "--help writes no relaunch record" || bad "help side effect" "$(cat "$W/logs/.relaunches")"
+
 # --- symlinked install: PATH symlink resolves back to the harness ---
 mkdir -p "$tmp/linkbin"; ln -s "$BIN/hermes-launch" "$tmp/linkbin/hermes-launch"
 out=$(cd "$W" && GH_TOKEN=x PATH="$tmp/linkbin:$PATH" hermes-launch --dry-run 2>&1)

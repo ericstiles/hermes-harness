@@ -14,6 +14,80 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+
+usage() {
+  cat <<'EOF'
+hermes-launch - start an unattended Hermes run over the current repo's beads queue
+
+Usage:
+  cd /path/to/target-repo && hermes-launch [options]
+  HERMES_REPO=/path/to/target-repo hermes-launch [options]
+
+Options:
+  --timeout DURATION  per-run kill timeout passed to hermes-run as RUN_TIMEOUT
+                      (e.g. 120m). Default: hermes-run's own default, 90m.
+  --max N             stop after N issues (default 10). Each issue is one
+                      Hermes run, one PR.
+  --reason CLASS      why this launch happens; recorded in the relaunch log
+                      (default: manual). hermes-supervise passes TIMEOUT,
+                      SANDBOX_DOWN, BEADS_SYNC_ERROR or MODEL_API_ERROR.
+  --issue ID          beads issue this relaunch is for; recorded with --reason
+                      so hermes-supervise can enforce its 3-per-issue-per-day
+                      limit (default: unknown).
+  --dry-run           print the command that would run and exit; starts
+                      nothing and writes nothing.
+  -h, --help          show this help and exit. Needs no repo and no GH_TOKEN.
+
+WHAT HAPPENS
+  1. Finds the target repo: $HERMES_REPO if set, else the git toplevel of the
+     current directory. Stops with an error if neither is a git repo.
+  2. Refuses to start (exit 1) if GH_TOKEN is not set in the environment.
+     Load it with direnv from the repo's .envrc.local. The token is never
+     written to a file, printed, or put on a command line.
+  3. Refuses to start (exit 1) if a hermes-run or "hermes chat" process is
+     already running in ANY repo. There is one local model, so one run at a time.
+  4. Creates <repo>/logs and appends one line "YYYYMMDD REASON ISSUE" to
+     <repo>/logs/.relaunches (the relaunch counter hermes-supervise reads).
+  5. Opens a new herdr tab named "hermes-run" in the current workspace, with
+     its working directory set to the repo, and types this into it:
+         cd '<repo>' && [GITHUB_REPO=..] [RUN_TIMEOUT=..] '<harness>/bin/hermes-run' N
+     If herdr is not usable it falls back to a detached tmux session named
+     "hermes-run" (attach with: tmux attach -t hermes-run). If neither works
+     it exits 1.
+  6. Returns immediately. The run continues in the tab; hermes-launch does not
+     wait. The tab's shell loads direnv, so GH_TOKEN reaches hermes-run there.
+
+  hermes-run then works the queue: for each issue it starts Hermes in the Docker
+  sandbox, which claims the issue, implements it with tests, and opens a PR.
+  It never merges. The run ends on an empty queue, a blocked issue, a failure
+  or a timeout, and writes RUN_RESULT=<CLASS> at the end of its log
+  (<repo>/logs/run-*.log). Check on it with hermes-status or hermes-supervise.
+
+ENVIRONMENT
+  GH_TOKEN       required. Fine-grained token for the target repo only.
+  GITHUB_REPO    optional owner/name; default is parsed from the repo's origin
+                 remote. Set it if origin is a fork or has no GitHub URL.
+  HERMES_REPO    optional path of the target repo instead of the current dir.
+  HERMES_LOG_DIR optional; default <repo>/logs.
+  RUN_TIMEOUT    optional; --timeout overrides it. Other hermes-run settings
+                 (HERMES_ARGS, HERMES_RETRY_ON_TIMEOUT, ...) are inherited
+                 only if exported in the tab's shell, not by this command.
+
+EXIT STATUS
+  0  started (or --dry-run, or --help)
+  1  not started: no GH_TOKEN, a run is already active, or no herdr/tmux
+  2  bad usage: unknown option, or not inside a git repo
+
+EXAMPLES
+  hermes-launch --dry-run                     see exactly what would start
+  hermes-launch                               up to 10 issues, 90m per run
+  hermes-launch --timeout 120m --max 3        longer runs, at most 3 issues
+  hermes-launch --reason TIMEOUT --issue proj-abc --timeout 120m
+  HERMES_REPO=~/repo/other hermes-launch      from any directory
+EOF
+}
+for _a in "$@"; do case "$_a" in -h|--help) usage; exit 0 ;; esac; done
+
 hh_repo || exit 2
 TO=""; REASON=manual; ISSUE=unknown; MAX=10; DRY=0
 while [ $# -gt 0 ]; do
@@ -30,10 +104,10 @@ done
 if ps -axo command | grep -E "$HH_ACTIVE_PATTERN" | grep -v grep | grep -qv hermes-launch; then
   echo "A hermes-run / hermes chat process is already running. Not starting." >&2; exit 1
 fi
-mkdir -p "$LOG_DIR"
 # Absolute path to hermes-run so the new tab's shell does not depend on PATH.
 cmd="cd '$REPO_ROOT' && ${GITHUB_REPO:+GITHUB_REPO='$GITHUB_REPO'} ${TO:+RUN_TIMEOUT='$TO'} '$HARNESS_HOME/bin/hermes-run' $MAX"
 if [ "$DRY" = 1 ]; then echo "DRY RUN: would start in herdr/tmux tab hermes-run: $cmd"; exit 0; fi
+mkdir -p "$LOG_DIR"
 printf '%s %s %s\n' "$(date +%Y%m%d)" "$REASON" "$ISSUE" >> "$LOG_DIR/.relaunches"
 if command -v herdr >/dev/null 2>&1 && herdr status >/dev/null 2>&1; then
   # New tab "hermes-run" in the current herdr workspace; its shell loads direnv

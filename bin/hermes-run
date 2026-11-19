@@ -2,7 +2,9 @@
 # hermes-run — work up to N beads issues in the CURRENT repo via one-shot Hermes runs.
 # Stops when the queue is empty, an issue is blocked, or a run fails/times out.
 #
-# Usage:  cd /path/to/target-repo && hermes-run [MAX_ISSUES]
+# Usage:  cd /path/to/target-repo && hermes-run [--clean] [MAX_ISSUES]
+#   --clean  before the first run, reset the sandbox's clone (/workspace/<name>) to
+#            origin/main; uncommitted work there is saved to logs/sandbox-dirty-*.patch
 # Repo:   GITHUB_REPO=owner/name overrides; default is parsed from the origin remote.
 # Model:  HERMES_ARGS="--provider ollama-launch -m qwen3.8:27b-mlx" overrides the config default.
 # Needs:  GH_TOKEN exported (forwarded into the sandbox via docker_forward_env),
@@ -41,8 +43,17 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/classify.sh"
 # shellcheck source=../lib/runtime.sh
 . "$HARNESS_HOME/lib/runtime.sh"
+# shellcheck source=../lib/sandbox.sh
+. "$HARNESS_HOME/lib/sandbox.sh"
 
-MAX=${1:-10}
+MAX=10; CLEAN=0
+for _a in "$@"; do
+  case "$_a" in
+    --clean) CLEAN=1 ;;
+    ''|*[!0-9]*) echo "hermes-run: unknown argument '$_a'. Usage: hermes-run [--clean] [MAX_ISSUES]" >&2; exit 2 ;;
+    *) MAX=$_a ;;
+  esac
+done
 # owner/name: $GITHUB_REPO, else parsed from the origin remote (see lib/common.sh)
 hh_github_repo || { echo "GITHUB_REPO is not set and no origin remote was found in $REPO_ROOT. Fix: export GITHUB_REPO=owner/name, or git remote add origin <url>" >&2; exit 2; }
 REPO=$GITHUB_REPO
@@ -104,6 +115,10 @@ for ((j = 0; j < ${#_args[@]}; j++)); do
 done
 IMAGE=$(_cfg terminal.docker_image)
 echo "== repo: $REPO | model: ${MODEL:-unknown} | provider: ${PROVIDER:-unknown} | sandbox: ${IMAGE:-default} | timeout: $TIMEOUT | retry-on-timeout: $RETRY | max issues: $MAX"
+if [ "$CLEAN" = 1 ]; then
+  [ -n "$IMAGE" ] || { echo "clean: terminal.docker_image is not set, so the sandbox container cannot be found; not starting a run" >&2; exit 2; }
+  hh_sandbox_reset "$IMAGE" "$NAME" "$LOG_DIR" || exit 2
+fi
 
 claimed_issue() { # <logfile> -> first issue id the run claimed, empty if none
   tr -d '\r' < "$1" | sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' | head -n 1

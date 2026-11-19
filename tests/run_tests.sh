@@ -107,6 +107,18 @@ echo "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "works through a PATH symli
 # --- hermes-run with stubbed hermes/bd/docker ---
 cat > "$tmp/bin/docker" <<'S'
 #!/bin/sh
+# scriptable sandbox: see tests/sandbox_clean_tests.sh for the STUB_* knobs
+echo "docker $*" >> "${STUB_LOG:-/dev/null}"
+case "$1" in
+  ps) [ -n "$STUB_CONTAINERS" ] && printf '%s\n' $STUB_CONTAINERS; exit 0 ;;
+  inspect) echo "${STUB_RUNNING:-true}"; exit 0 ;;
+  exec) shift; shift
+    case "$*" in
+      "test -d"*) [ "${STUB_WS:-1}" = 1 ]; exit $? ;;
+      *"git diff HEAD"*) [ -n "$STUB_DIRTY" ] && printf '%s\n' "$STUB_DIRTY"; exit 0 ;;
+      *origin/main*) exit "${STUB_RESET_RC:-0}" ;;
+    esac ;;
+esac
 exit 0
 S
 cat > "$tmp/bin/bd" <<'S'
@@ -176,6 +188,8 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   . "$HERE/run_timestamps_tests.sh"
   # agent ended its turn early (no PR, no sentinel): classify AGENT_STOPPED, resume once
   . "$HERE/agent_stopped_tests.sh"
+  # --clean: reset the sandbox workspace to origin/main, saving uncommitted work first
+  . "$HERE/sandbox_clean_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

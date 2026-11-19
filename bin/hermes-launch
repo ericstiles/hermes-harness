@@ -3,7 +3,7 @@
 # "hermes-run" (fallback: detached tmux session "hermes-run"). Refuses if a run
 # is active anywhere (one local model, one run at a time).
 #
-# Usage: cd /path/to/target-repo && hermes-launch [--timeout 120m] [--reason CLASS] [--issue ID] [--max N] [--dry-run]
+# Usage: cd /path/to/target-repo && hermes-launch [--clean] [--timeout 120m] [--reason CLASS] [--issue ID] [--max N] [--dry-run]
 # Needs GH_TOKEN in the environment (direnv loads the repo's .envrc.local).
 # GITHUB_REPO is optional: hermes-run defaults it to the origin remote.
 # The token is never written to a file or printed.
@@ -34,6 +34,12 @@ Options:
   --issue ID          beads issue this relaunch is for; recorded with --reason
                       so hermes-supervise can enforce its 3-per-issue-per-day
                       limit (default: unknown).
+  --clean             start fresh: hermes-run resets the sandbox's clone of the
+                      repo (/workspace/<name> in the Docker container) to
+                      origin/main before the first run. Uncommitted work left
+                      there by a stopped run is saved first to
+                      <repo>/logs/sandbox-dirty-<stamp>.patch. The container,
+                      other repos and ignored files (.venv) are not touched.
   --dry-run           print the command that would run and exit; starts
                       nothing and writes nothing.
   -h, --help          show this help and exit. Needs no repo and no GH_TOKEN.
@@ -88,6 +94,7 @@ EXAMPLES
   hermes-launch --dry-run                     see exactly what would start
   hermes-launch                               up to 10 issues, 90m per run
   hermes-launch --timeout 120m --max 3        longer runs, at most 3 issues
+  hermes-launch --clean                       reset the sandbox clone first, then run
   hermes-launch --reason TIMEOUT --issue proj-abc --timeout 120m
   HERMES_REPO=~/repo/other hermes-launch      from any directory
 EOF
@@ -95,9 +102,10 @@ EOF
 for _a in "$@"; do case "$_a" in -h|--help) usage; exit 0 ;; esac; done
 
 hh_repo || exit 2
-TO=""; REASON=manual; ISSUE=unknown; MAX=10; DRY=0
+TO=""; REASON=manual; ISSUE=unknown; MAX=10; DRY=0; CLEAN=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --clean)   CLEAN="--clean "; shift ;;
     --timeout) TO=${2:?}; shift 2 ;;
     --reason)  REASON=${2:?}; shift 2 ;;
     --issue)   ISSUE=${2:?}; shift 2 ;;
@@ -122,7 +130,7 @@ if [ -n "$problems" ]; then
   echo "Not starting. Missing or blocking:$problems" >&2; exit 1
 fi
 # Absolute path to hermes-run so the new tab's shell does not depend on PATH.
-cmd="cd '$REPO_ROOT' && GITHUB_REPO='$GITHUB_REPO' ${TO:+RUN_TIMEOUT='$TO'} '$HARNESS_HOME/bin/hermes-run' $MAX"
+cmd="cd '$REPO_ROOT' && GITHUB_REPO='$GITHUB_REPO' ${TO:+RUN_TIMEOUT='$TO'} '$HARNESS_HOME/bin/hermes-run' $CLEAN$MAX"
 if [ "$DRY" = 1 ]; then echo "DRY RUN: would start in herdr/tmux tab hermes-run: $cmd"; exit 0; fi
 mkdir -p "$LOG_DIR"
 printf '%s %s %s\n' "$(date +%Y%m%d)" "$REASON" "$ISSUE" >> "$LOG_DIR/.relaunches"

@@ -104,6 +104,17 @@ hermes-launch --dry-run && hermes-launch
 The local reviewer and `hermes-run` share one Ollama. With the same model they share one
 loaded copy; a different `REVIEWER_MODEL` needs memory for both.
 
+## Starting fresh (`--clean`)
+Hermes runs its commands in one persistent Docker container and clones the repo into
+`/workspace/<name>` there, so a run that stops mid-issue leaves its uncommitted work behind for
+the next run. `hermes-launch --clean` (or `hermes-run --clean [N]`) resets that clone to
+`origin/main` before the first run: `git checkout -f -B main origin/main && git clean -fd`.
+Anything uncommitted (tracked changes and new files) is first saved on the host to
+`logs/sandbox-dirty-<stamp>.patch`; restore it with `git apply` in a checkout of the branch it
+came from (the message names it). The container is found by `terminal.docker_image`; if there is
+not exactly one, nothing is reset and no run starts. The container itself, other repos'
+workspaces and ignored files such as `.venv` are left alone.
+
 ## Run logs
 Each run writes two files in `logs/`:
 - `run-<stamp>.log`: the raw Hermes output plus a final `RUN_RESULT=` line. The classifier, `hermes-status` and `hermes-supervise` read only this file.

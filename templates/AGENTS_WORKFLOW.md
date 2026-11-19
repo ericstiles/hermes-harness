@@ -49,7 +49,8 @@ overrides the global "do not commit or push" default for this workflow only.
         │               problems outside the PR's scope → separate tech-debt issues
         │               → next hermes-run picks F
         │
-        └── 2nd reject of the same T ──► T blocked + `bd human T` → the owner decides
+        └── 2nd reject of the same T ──► T blocked + label human (`bd human list`),
+                                         PR labelled needs-human → the owner decides
 ```
 
 - Start with `bd prime`. Use `bd` for all tracking; no markdown TODOs.

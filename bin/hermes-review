@@ -3,22 +3,26 @@
 #
 # Usage: cd /path/to/target-repo && hermes-review [--dry-run] [--skip-agent] [--watch SECONDS] [--pr N]
 #   --dry-run      print what it would do; comment, merge, close and create nothing
-#   --skip-agent   no Claude call (only with --dry-run): identification + checks only
+#   --skip-agent   no model call (only with --dry-run): identification + checks only
+#   --agent A      ollama (default: the local model Hermes uses) or claude (claude -p)
+#   --model M      reviewer model (default for ollama: model.default in ~/.hermes/config.yaml)
 #   --watch N      keep polling every N seconds
 #   --pr N         only this PR
 #
 # For each open, non-draft PR on a bd/<id> branch: verify the bead id (branch, title
 # "type(<id>):", body "Bead: <id>") and that the bead is in_progress with the PR link;
 # rebase the PR onto origin/main in a throwaway worktree; run the repo's checks there and
-# on main (hermes-review.json, Python defaults) and keep only NEW problems; ask a
-# headless `claude -p` reviewer (read-only tools) for a JSON verdict. Approved: review,
+# on main (hermes-review.json, Python defaults) and keep only NEW problems; ask the
+# reviewer model (local Ollama by default, no tools) for a JSON verdict. Approved: review,
 # `gh pr merge --rebase --match-head-commit`, `bd close --force`, `bd dolt push`.
 # Otherwise: comment with each problem and file one tech-debt bead per problem.
 #
 # Env (optional): REVIEWER_GH_TOKEN  token of a SEPARATE GitHub identity; with it the
 #                                    agent approves / requests changes, without it it
 #                                    comments (GitHub refuses self-approval)
-#                 REVIEWER_MODEL     claude model   HERMES_REVIEW_PYTHON  python >= 3.10
+#                 REVIEWER_AGENT / REVIEWER_MODEL   defaults for --agent / --model
+#                 OLLAMA_HOST_URL    default http://127.0.0.1:11434
+#                 HERMES_REVIEW_PYTHON  python >= 3.10
 # Runs the PR's checks on the host, outside the Hermes sandbox.
 set -uo pipefail
 _s=${BASH_SOURCE[0]}
@@ -27,11 +31,11 @@ HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
 
-case "${1:-}" in -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
 hh_repo || exit 2
 cd "$REPO_ROOT" || exit 2
-for tool in gh bd git claude; do
+for tool in gh bd git; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 2; }
 done
 

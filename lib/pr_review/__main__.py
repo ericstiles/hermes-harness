@@ -12,6 +12,7 @@ import sys
 import time
 from pathlib import Path
 
+from pr_review import local_agent
 from pr_review.checks import ConfigError, load_config
 from pr_review.review import Context, review_pr
 from pr_review.services import Beads, GitHub
@@ -25,11 +26,28 @@ HARNESS_HOME = Path(os.environ.get("HARNESS_HOME") or Path(__file__).resolve().p
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hermes-review", description="Review and merge Hermes PRs.")
     p.add_argument("--dry-run", action="store_true", help="print actions; change nothing")
-    p.add_argument("--skip-agent", action="store_true", help="no Claude call (needs --dry-run)")
+    p.add_argument("--skip-agent", action="store_true", help="no model call (needs --dry-run)")
     p.add_argument("--watch", type=int, default=0, metavar="SECONDS", help="poll interval")
     p.add_argument("--pr", type=int, default=None, help="only this PR number")
-    p.add_argument("--model", default=os.environ.get("REVIEWER_MODEL"), help="claude model")
+    p.add_argument(
+        "--agent",
+        choices=("ollama", "claude"),
+        default=os.environ.get("REVIEWER_AGENT", "ollama"),
+        help="reviewer: local Ollama model (default) or claude -p",
+    )
+    p.add_argument(
+        "--model",
+        default=os.environ.get("REVIEWER_MODEL"),
+        help="reviewer model (default for ollama: Hermes's model.default)",
+    )
     return p
+
+
+def resolve_model(agent_name: str, explicit: str | None) -> str | None:
+    """--model / REVIEWER_MODEL, else (local) the model Hermes is configured to use."""
+    if explicit:
+        return explicit
+    return local_agent.hermes_model() if agent_name == "ollama" else None
 
 
 def run_pass(ctx: Context, only: int | None) -> int:
@@ -58,14 +76,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.skip_agent and not args.dry_run:
         log.error("--skip-agent is only allowed with --dry-run")
         return 2
+    model = resolve_model(args.agent, args.model)
+    if args.agent == "ollama" and not model and not args.skip_agent:
+        log.error("no local model: set REVIEWER_MODEL or model.default in ~/.hermes/config.yaml")
+        return 2
     repo = Path(run(["git", "rev-parse", "--show-toplevel"]).out.strip() or ".")
     try:
         config = load_config(repo, HARNESS_HOME)
     except ConfigError as exc:
         log.error("%s", exc)
         return 2
-    log.info("repo %s | checks: %s | instructions: %s", repo,
-             ", ".join(c.name for c in config.checks) or "none", config.instructions)  # fmt: skip
+    log.info("repo %s | reviewer: %s %s | checks: %s | instructions: %s", repo, args.agent,
+             model or "(default)", ", ".join(c.name for c in config.checks) or "none",
+             config.instructions)  # fmt: skip
     ctx = Context(
         run=run,
         repo=repo,
@@ -74,7 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         config=config,
         dry_run=args.dry_run,
         skip_agent=args.skip_agent,
-        model=args.model,
+        agent=args.agent,
+        model=model,
+        ollama_host=os.environ.get("OLLAMA_HOST_URL", local_agent.DEFAULT_HOST),
     )
     while True:
         try:

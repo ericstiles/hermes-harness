@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pr_review import agent
+from pr_review import agent, local_agent
 from pr_review.checks import ReviewConfig, new_problems
 from pr_review.gate import GateOutput, RebaseConflict, checkout, fetch, run_gate
 from pr_review.meta import BeadMismatch, resolve_bead
@@ -37,7 +37,10 @@ class Context:
     config: ReviewConfig | None = None
     dry_run: bool = False
     skip_agent: bool = False
+    agent: str = "ollama"  # ollama (local, default) | claude
     model: str | None = None
+    ollama_host: str = local_agent.DEFAULT_HOST
+    post: local_agent.Post = local_agent.http_post
     _baseline: dict[str, GateOutput] = field(default_factory=dict)
 
     def baseline(self) -> GateOutput:
@@ -74,6 +77,19 @@ def _checks_report(ctx: Context, base: GateOutput, gate: GateOutput) -> tuple[li
     return found, "\n\n".join(lines) or "No mechanical checks configured for this repo."
 
 
+def _ask(ctx: Context, tree: Path, bead: str, pr: PullRequest, diff: str, report: str) -> str:
+    """Raw verdict from the configured reviewer: the local Ollama model, or claude -p."""
+    prompt = agent.build_prompt(
+        ctx.config.instructions.read_text(encoding="utf-8"),
+        ctx.beads.text(bead), pr.body, diff, report,
+    )  # fmt: skip
+    if ctx.agent == "claude":
+        return agent.ask(ctx.run, tree, prompt, ctx.model)
+    files = local_agent.changed_files(ctx.run, tree)
+    prompt += "\n\n## Changed files (full text after the PR)\n" + files
+    return local_agent.ask(ctx.post, ctx.ollama_host, ctx.model or "", prompt)
+
+
 def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
     base = ctx.baseline()
     try:
@@ -83,11 +99,7 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
             if ctx.skip_agent:
                 verdict = Verdict(False, "Reviewer agent skipped (--skip-agent).", ())
             else:
-                prompt = agent.build_prompt(
-                    ctx.config.instructions.read_text(encoding="utf-8"),
-                    ctx.beads.text(bead), pr.body, diff, report,
-                )  # fmt: skip
-                verdict = parse_verdict(agent.ask(ctx.run, tree, prompt, ctx.model))
+                verdict = parse_verdict(_ask(ctx, tree, bead, pr, diff, report))
             return with_checks(verdict, found)
     except RebaseConflict as exc:
         problem = Problem("", None, "Does not rebase cleanly onto main", str(exc))

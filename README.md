@@ -21,9 +21,14 @@ Runs on the host next to `hermes-run`. For each open, non-draft `bd/<id>` PR:
    and re-checks on the next pass.
 2. **Check:** rebases the PR onto `origin/main` in a throwaway worktree and runs the repo's
    checks there and on `main`; only problems the PR adds count.
-3. **Review:** a headless `claude -p` (read-only tools, JSON-schema verdict) reviews the
-   diff against the ticket using `templates/REVIEWER_AGENT.md`, or the repo's
-   `docs/REVIEWER_AGENT.md`.
+3. **Review:** a **local** model reviews the diff against the ticket, using
+   `templates/REVIEWER_AGENT.md` or the repo's `docs/REVIEWER_AGENT.md`. By default it is the
+   Ollama model Hermes uses (`model.default` in `~/.hermes/config.yaml`; override with
+   `--model` / `REVIEWER_MODEL`). It gets the instructions, ticket, PR description, check
+   results, diff and the full text of the changed files, has no tools, and must answer with
+   the JSON verdict (Ollama `format` schema). `--agent claude` uses `claude -p` instead
+   (read-only Read/Grep/Glob, run outside the PR checkout so the PR's `CLAUDE.md` is never
+   loaded).
 4. **Act:** approved → review, `gh pr merge --rebase --match-head-commit`, `bd close
    --force`, `bd dolt push` (pull and retry once if rejected). Otherwise → a comment listing
    each problem, one `tech-debt` bead per problem (`discovered-from` the ticket, all 8
@@ -78,7 +83,11 @@ hermes-launch --dry-run && hermes-launch
 `GITHUB_REPO` (default: parsed from `origin`), `RUN_TIMEOUT` (90m),
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
 `HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TEST_CMD` (for `hermes-status --tests`),
-`REVIEWER_GH_TOKEN`, `REVIEWER_MODEL`, `HERMES_REVIEW_PYTHON` (for `hermes-review`).
+`REVIEWER_GH_TOKEN`, `REVIEWER_AGENT`, `REVIEWER_MODEL`, `OLLAMA_HOST_URL`,
+`HERMES_REVIEW_PYTHON` (for `hermes-review`).
+
+The local reviewer and `hermes-run` share one Ollama. With the same model they share one
+loaded copy; a different `REVIEWER_MODEL` needs memory for both.
 
 ## Limits
 - One run at a time across all repos (one local model). The per-repo lock stops two runs in the same repo; the active-process check stops runs in different repos.

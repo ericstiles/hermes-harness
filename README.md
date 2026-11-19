@@ -113,7 +113,8 @@ After each run `hermes-run` prints `RUN_TIME start= end= elapsed= issue=`; at th
 
 ## Limits
 - One run at a time across all repos (one local model). The per-repo lock stops two runs in the same repo; the active-process check stops runs in different repos.
-- Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN AUTH_ERROR BEADS_SYNC_ERROR UNKNOWN (`lib/classify.sh`; patterns anchored to real log formats, with regression fixtures in `tests/fixtures`).
+- Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED UNKNOWN (`lib/classify.sh`; patterns anchored to real log formats, with regression fixtures in `tests/fixtures`).
+- AGENT_STOPPED: the session ended cleanly but with no PR URL and no `RUN_BLOCKED`/`NO_READY_WORK`, typically because the model asked a question nobody will answer (in `-q` mode a reply without a tool call ends the session). `hermes-run` first asks GitHub whether `bd/<issue>` already has a PR (then it is OK_DONE), otherwise resumes the same session once with a "no human is present, continue" prompt (`HERMES_RESUME_ON_STOP=0` disables). The run prompt and `templates/AGENTS_WORKFLOW.md` both tell the agent no human is present.
 
 ## Tests
 `tests/run_tests.sh` builds a throwaway target repo with stubbed `hermes`/`bd`/`docker`. No network, no real agents.

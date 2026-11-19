@@ -115,13 +115,21 @@ echo "bd $*" >> "$STUB_LOG"
 case "$1 $2" in "list --status=in_progress") echo "◐ ${STUB_PREFIX:-widgets}-abc P2 stuck" ;; esac
 exit 0
 S
+cat > "$tmp/bin/gh" <<'S'
+#!/bin/sh
+# offline gh: `pr list` prints $STUB_PR_URL (empty = no PR); everything else fails
+echo "gh $*" >> "$STUB_LOG"
+[ "$1 $2" = "pr list" ] && { [ -n "$STUB_PR_URL" ] && echo "$STUB_PR_URL"; exit 0; }
+exit 1
+S
 cat > "$tmp/bin/hermes" <<'S'
 #!/bin/sh
 # config get -> value; chat -> first call hangs (killed by timeout), later calls finish
 [ "$1" = config ] && { echo stub; exit 0; }
 echo "hermes $*" >> "$STUB_LOG"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_COUNT"
-[ -n "$STUB_FIXTURE" ] && { cat "$STUB_FIXTURE"; exit "${STUB_EXIT:-0}"; }
+f=$STUB_FIXTURE; [ "$n" -ge 2 ] && [ -n "$STUB_FIXTURE_2" ] && f=$STUB_FIXTURE_2
+[ -n "$f" ] && { cat "$f"; exit "${STUB_EXIT:-0}"; }
 echo "  ┊ 💻 \$ bd update ${STUB_PREFIX:-widgets}-abc --claim --json"
 if [ "$n" = 1 ] && [ "$STUB_HANG_FIRST" = 1 ]; then sleep 30; exit 0; fi
 echo "PR https://github.com/o/r/pull/1"; echo; echo "Resume this session with:"; echo "Messages:       9 (1 user, 8 tool calls)"
@@ -166,6 +174,8 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   done
   # timestamped twin log, RUN_TIME summaries, raw log unchanged
   . "$HERE/run_timestamps_tests.sh"
+  # agent ended its turn early (no PR, no sentinel): classify AGENT_STOPPED, resume once
+  . "$HERE/agent_stopped_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

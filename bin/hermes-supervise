@@ -76,6 +76,9 @@ case "$class" in
          why="model server error; confirm Ollama answers, then relaunch"; fi ;;
   AUTH_ERROR) why="credentials problem (GH_TOKEN scope/expiry); needs the human" ;;
   BLOCKED)    why="Hermes marked the issue blocked and stopped; read its notes (bd show) and decide" ;;
+  AGENT_STOPPED)
+    sid=$(tr -d '\r' < "$log" | sed -n 's/^Session: *\([0-9A-Za-z_]*\)$/\1/p' | tail -n 1)
+    why="agent ended its turn mid-issue with no PR and no RUN_BLOCKED (often: it asked a question nobody answers); hermes-run resumes once by default. Read the end of the log, then resume: hermes --resume ${sid:-<session id>} -q \"Continue the issue to its PR\" or release it: bd unclaim ${issue:-<id>}" ;;
   *)          why="unclassified; read the evidence" ;;
 esac
 

@@ -5,7 +5,7 @@
 #   hermes_classify <logfile> [exit_code]   -> prints ONE class name
 #
 # Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN
-#          AUTH_ERROR BEADS_SYNC_ERROR UNKNOWN
+#          AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED UNKNOWN
 # Patterns are anchored to the formats seen in real logs so agent narration or
 # test output (e.g. "assert status == 404", "Request timed out" from the title
 # generator) cannot trigger a false match. bash 3.2 compatible; read-only.
@@ -54,5 +54,9 @@ hermes_classify() {
   if printf '%s\n' "$tail60" | grep -qE 'Bad credentials|could not read Username|[Aa]uthentication failed|HTTP 40[13]\b|\((401|403)\)'; then
     echo AUTH_ERROR; return 0
   fi
+  # The session ended cleanly (footer, exit 0) yet produced no PR, no sentinel and
+  # no known error: the agent ended its turn mid-issue, e.g. by asking a question
+  # nobody will answer (2026-11-19 incident). hermes-run resumes such a session once.
+  if [ "${ec:-0}" = "0" ]; then echo AGENT_STOPPED; return 0; fi
   echo UNKNOWN
 }

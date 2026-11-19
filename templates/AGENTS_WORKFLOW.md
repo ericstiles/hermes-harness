@@ -54,6 +54,13 @@ overrides the global "do not commit or push" default for this workflow only.
 ```
 
 - Start with `bd prime`. Use `bd` for all tracking; no markdown TODOs.
+- **No human is present.** These runs are unattended: nobody reads your
+  messages until the run is over and nobody will answer a question. Never ask
+  a question, offer options, or wait for confirmation. A reply without a tool
+  call ENDS the session, so only reply without a tool call when you are done:
+  the PR URL is printed (step 4), or you printed `RUN_BLOCKED` (step 5), or
+  `NO_READY_WORK`. If you are unsure, decide yourself and note the decision in
+  the PR body; if you truly cannot continue, that is step 5 (blocked).
 - Do exactly ONE issue per session:
   1. `bd ready --json --exclude-type epic --sort priority` and take the FIRST
      item. If empty, print `NO_READY_WORK` and stop.

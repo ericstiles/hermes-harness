@@ -9,11 +9,17 @@ overrides the global "do not commit or push" default for this workflow only.
 
 - Start with `bd prime`. Use `bd` for all tracking; no markdown TODOs.
 - Do exactly ONE issue per session:
-  1. `bd ready --json`. If empty, print `NO_READY_WORK` and stop.
+  1. `bd ready --json --exclude-type epic --sort priority` and take the FIRST
+     item. If empty, print `NO_READY_WORK` and stop.
   2. `bd update <id> --claim --json`, then `bd show <id>`.
-  3. Branch `bd/<id>` from latest main. Implement, run tests and lint.
-  4. If tests pass: commit, push the branch, open a PR with `gh pr create`,
-     `bd close <id> --reason "<summary + PR link>" --json`.
+  3. `git fetch origin`, then branch `bd/<id>` from `origin/main`. Implement,
+     run tests and lint.
+  4. If tests pass: commit, push the branch, open a PR with `gh pr create`
+     (base `main`) titled `<type>(<id>): <summary>` with a line `Bead: <id>` in
+     the body, then `bd update <id> --append-notes "PR: <url>"`. Do NOT close
+     the issue: it stays `in_progress` so its dependents stay blocked until the
+     PR is merged; the reviewer (`hermes-review`) closes it on merge. Print the
+     full PR URL on its own line in your final message.
   5. If you hit a blocker: commit WIP to the branch, push it, run
      `bd update <id> --status blocked --append-notes "<why>"`, and print
      `RUN_BLOCKED`. Stop. Don't guess at requirements.

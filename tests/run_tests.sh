@@ -157,4 +157,16 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
   [ $rc -ne 0 ] && echo "$out" | grep -q 'GITHUB_REPO' && ok "no origin and no GITHUB_REPO -> clear error" || bad "no origin" "$rc $out"
 fi
+# --- hermes-review: CLI wrapper + Python unit tests (pytest via uv; skipped without uv) ---
+out=$("$BIN/hermes-review" --help 2>&1)
+echo "$out" | grep -q 'reviewer agent for Hermes PRs' && ok "hermes-review --help" || bad "review help" "$out"
+out=$(cd "$tmp" && "$BIN/hermes-review" --dry-run 2>&1); rc=$?
+[ $rc -eq 2 ] && echo "$out" | grep -q 'not inside a git repo' && ok "hermes-review outside a repo -> exit 2" || bad "review no repo" "$rc $out"
+if command -v uv >/dev/null 2>&1; then
+  out=$(cd "$ROOT" && PYTHONPATH="$ROOT/lib" PYTHONDONTWRITEBYTECODE=1 uv run -q --no-project \
+        --python 3.12 --with pytest python -m pytest -q -p no:cacheprovider tests/py 2>&1); rc=$?
+  [ $rc -eq 0 ] && ok "pr_review unit tests: $(echo "$out" | tail -n 1)" || bad "pr_review unit tests" "$(echo "$out" | tail -n 20)"
+else
+  echo "skip - pr_review unit tests (install uv to run them)"
+fi
 echo; echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

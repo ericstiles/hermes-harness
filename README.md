@@ -10,6 +10,45 @@ on the **current directory's git repo** (or `HERMES_REPO`), never on their own f
 | `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active or `GH_TOKEN` is unset |
 | `hermes-status [--tests]` | Read-only snapshot: origin/main, PRs, beads, active run, newest log |
 | `hermes-supervise [log]` | Read-only diagnosis: `CLASS=`, `ACTION=`, `NEXT=` |
+| `hermes-review [--dry-run] [--watch N]` | Reviewer agent: review each open `bd/*` PR, rebase-merge and close its bead, or comment and file `tech-debt` beads |
+
+## Reviewer agent (`hermes-review`)
+
+Runs on the host next to `hermes-run`. For each open, non-draft `bd/<id>` PR:
+
+1. **Identify:** branch `bd/<id>`, title `type(<id>):` and body `Bead: <id>` must agree, and
+   the bead must be `in_progress` with the PR link in its notes. Otherwise it comments once
+   and re-checks on the next pass.
+2. **Check:** rebases the PR onto `origin/main` in a throwaway worktree and runs the repo's
+   checks there and on `main`; only problems the PR adds count.
+3. **Review:** a headless `claude -p` (read-only tools, JSON-schema verdict) reviews the
+   diff against the ticket using `templates/REVIEWER_AGENT.md`, or the repo's
+   `docs/REVIEWER_AGENT.md`.
+4. **Act:** approved → review, `gh pr merge --rebase --match-head-commit`, `bd close
+   --force`, `bd dolt push` (pull and retry once if rejected). Otherwise → a comment listing
+   each problem, one `tech-debt` bead per problem (`discovered-from` the ticket, all 8
+   template sections), and a note on the ticket. It never merges a PR with problems.
+
+A hidden `<!-- pr-review:<sha> -->` marker makes it review each head commit once.
+
+**Checks** come from `hermes-review.json` at the target repo root (optional):
+
+```json
+{"checks": [{"name": "pytest", "cmd": ["{python}", "-m", "pytest", "-q"], "parser": "pytest"},
+            {"name": "lint", "cmd": ["npm", "run", "lint"], "parser": "lines"}],
+ "instructions": "docs/REVIEWER_AGENT.md"}
+```
+
+`{python}` is the repo's `.venv/bin/python` (else `python3`). Parsers: `pytest`, `ruff`
+(`--output-format concise`), `ruff-format`, `lines` (any new output line). Without the
+file, a repo with `pyproject.toml` gets pytest + ruff check + ruff format.
+
+**Approvals:** GitHub refuses an approval from the account that opened the PR. Set
+`REVIEWER_GH_TOKEN` to a token of a separate identity (machine user or GitHub App) to
+approve / request changes; without it the agent records its review as a comment. Branch
+protection that requires one approval then makes the reviewer a real gate.
+
+**Trust:** it runs the PR's checks on the host, outside the Hermes sandbox.
 
 ## Install (once)
 
@@ -38,7 +77,8 @@ hermes-launch --dry-run && hermes-launch
 ## Env
 `GITHUB_REPO` (default: parsed from `origin`), `RUN_TIMEOUT` (90m),
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
-`HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TEST_CMD` (for `hermes-status --tests`).
+`HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TEST_CMD` (for `hermes-status --tests`),
+`REVIEWER_GH_TOKEN`, `REVIEWER_MODEL`, `HERMES_REVIEW_PYTHON` (for `hermes-review`).
 
 ## Limits
 - One run at a time across all repos (one local model). The per-repo lock stops two runs in the same repo; the active-process check stops runs in different repos.
@@ -46,3 +86,4 @@ hermes-launch --dry-run && hermes-launch
 
 ## Tests
 `tests/run_tests.sh` builds a throwaway target repo with stubbed `hermes`/`bd`/`docker`. No network, no real agents.
+It also runs the `hermes-review` unit tests in `tests/py` with pytest via `uv` (skipped if `uv` is missing).

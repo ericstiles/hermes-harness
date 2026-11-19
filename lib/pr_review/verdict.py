@@ -10,6 +10,7 @@ MARKER_PREFIX = "pr-review:"
 REFUSED_PREFIX = "pr-review-refused:"
 DEBT_LABEL = "tech-debt"
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
+FIX_PRIORITIES = ("high", "same")
 PATH_LINE = re.compile(r"^(?P<path>[^:\s]+):(?P<line>\d+):")
 
 
@@ -19,6 +20,9 @@ class Problem:
     line: int | None
     title: str
     detail: str
+    # False: a real problem outside the ticket's scope. It becomes a tech-debt issue and
+    # does not block the merge. Mechanical check regressions are always in scope.
+    in_scope: bool = True
 
     def location(self) -> str:
         return self.file if self.line is None else f"{self.file}:{self.line}"
@@ -29,6 +33,16 @@ class Verdict:
     approve: bool
     summary: str
     problems: tuple[Problem, ...]
+    # Priority of the review-fix issue: "high" (P1) or "same" (the ticket's priority).
+    fix_priority: str = "same"
+
+    def blocking(self) -> tuple[Problem, ...]:
+        """In-scope problems: fixed on the PR's branch before it can merge."""
+        return tuple(p for p in self.problems if p.in_scope)
+
+    def debt(self) -> tuple[Problem, ...]:
+        """Out-of-scope problems: one tech-debt issue each, never blocking."""
+        return tuple(p for p in self.problems if not p.in_scope)
 
 
 def _payload(raw: str) -> dict[str, object]:
@@ -56,11 +70,14 @@ def parse_verdict(raw: str) -> Verdict:
             line=int(p["line"]) if p.get("line") not in (None, "") else None,
             title=str(p.get("title", "")).strip(),
             detail=str(p.get("detail", "")).strip(),
+            in_scope=p.get("in_scope") is not False,
         )
         for p in payload.get("problems", [])  # type: ignore[union-attr]
     )
-    approve = bool(payload.get("approve")) and not problems
-    return Verdict(approve, str(payload.get("summary", "")).strip(), problems)
+    approve = bool(payload.get("approve")) and not any(p.in_scope for p in problems)
+    wanted = str(payload.get("fix_priority", "same"))
+    priority = wanted if wanted in FIX_PRIORITIES else "same"
+    return Verdict(approve, str(payload.get("summary", "")).strip(), problems, priority)
 
 
 def with_checks(verdict: Verdict, found: list[Problem]) -> Verdict:
@@ -85,7 +102,8 @@ def review_comment(verdict: Verdict, head_sha: str) -> str:
         lines += ["", "Problems:"]
         for p in verdict.problems:
             suffix = f": {p.detail}" if p.detail else ""
-            lines.append(f"- `{p.location()}` {p.title}{suffix}")
+            scope = "" if p.in_scope else " _(outside this PR's scope: filed as tech debt)_"
+            lines.append(f"- `{p.location()}` {p.title}{suffix}{scope}")
     return "\n".join(lines) + "\n"
 
 

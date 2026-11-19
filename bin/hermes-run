@@ -108,7 +108,8 @@ run_once() { # <timeout>
   log="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
   echo "== run $i/$MAX | model: ${MODEL:-unknown} | timeout: $1 -> $log"
   # shellcheck disable=SC2086  # HERMES_ARGS is intentionally word-split
-  "$TO" "$1" hermes chat ${HERMES_ARGS:-} -q "$PROMPT" 2>&1 | tee "$log"
+  # --pass-session-id: Hermes sees its session id and writes `Hermes-Session:` in the PR.
+  "$TO" "$1" hermes chat --pass-session-id ${HERMES_ARGS:-} -q "$PROMPT" 2>&1 | tee "$log"
   status=${PIPESTATUS[0]}
   class=$(hermes_classify "$log" "$status")
   echo "RUN_RESULT=$class" | tee -a "$log"

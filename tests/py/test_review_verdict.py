@@ -19,7 +19,12 @@ BAD = {
     "approve": False,
     "summary": "Out of scope edit.",
     "problems": [
-        {"file": "src/a.py", "line": 12, "title": "Edits cli.py", "detail": "Ticket forbids it."}
+        {
+            "file": "src/a.py",
+            "line": 12,
+            "title": "Edits cli.py",
+            "detail": "Ticket forbids it.",
+        }
     ],
 }
 
@@ -86,3 +91,32 @@ def test_debt_issue_has_all_eight_template_sections() -> None:
         "## Tests first", "## Acceptance", "## Constraints", "## Dependencies",
     ):  # fmt: skip
         assert section in body, section
+
+
+def _wrap(payload: dict[str, object]) -> str:
+    return json.dumps({"structured_output": payload})
+
+
+def test_problems_are_in_scope_and_fix_priority_same_by_default() -> None:
+    verdict = parse_verdict(_wrap(BAD))
+    assert verdict.problems[0].in_scope is True
+    assert verdict.fix_priority == "same"
+
+
+def test_fix_priority_high_is_kept_and_unknown_values_fall_back() -> None:
+    assert parse_verdict(_wrap({**BAD, "fix_priority": "high"})).fix_priority == "high"
+    assert parse_verdict(_wrap({**BAD, "fix_priority": "urgent!"})).fix_priority == "same"
+
+
+def test_only_out_of_scope_problems_do_not_block_approval() -> None:
+    outside = {**BAD["problems"][0], "in_scope": False}  # type: ignore[index]
+    verdict = parse_verdict(_wrap({"approve": True, "summary": "ok", "problems": [outside]}))
+    assert verdict.approve is True
+    assert verdict.problems[0].in_scope is False
+    assert verdict.blocking() == ()
+    assert verdict.debt() == verdict.problems
+
+
+def test_gate_problems_are_in_scope_and_block() -> None:
+    verdict = with_checks(Verdict(True, "ok", ()), [Problem("t.py", 1, "test fails", "")])
+    assert verdict.approve is False and verdict.blocking() == verdict.problems

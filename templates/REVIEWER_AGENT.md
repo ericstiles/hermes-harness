@@ -37,9 +37,19 @@ reject it.
 
 Return only the JSON verdict:
 
-- `approve`: true only if every rule above holds.
+- `approve`: true only if every rule above holds. Problems outside the PR's
+  scope do not count against it.
 - `summary`: two or three sentences on what the PR does and why it passes or fails.
+- `fix_priority`: `high` when a problem is a safety, data-loss or security
+  issue, or breaks behaviour other tickets depend on; otherwise `same` (the
+  fix keeps the ticket's priority).
 - `problems`: one entry per distinct problem, each with `file`, `line` (or
-  null), a short `title`, and a `detail` that says what is wrong and what the
-  fix is. Each problem becomes its own tech-debt ticket, so make each one
-  self-contained and actionable. Empty when approving.
+  null), a short `title`, a `detail` that says what is wrong and what the fix
+  is, and `in_scope`:
+  - `true`: the PR caused it or the ticket requires it. It must be fixed on
+    this PR's branch before merge; all in-scope problems go into one
+    review-fix ticket that sends the PR back to its author.
+  - `false`: a real problem the PR did not cause and the ticket does not cover
+    (for example, a bug you noticed in nearby code). It becomes its own
+    tech-debt ticket and does not block the merge, so make it self-contained.
+  Empty when there is nothing to report.

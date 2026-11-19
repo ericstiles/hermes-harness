@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pr_review import agent, local_agent
+from pr_review import agent, fixes, local_agent
 from pr_review.checks import ReviewConfig, new_problems
 from pr_review.gate import GateOutput, RebaseConflict, checkout, fetch, run_gate
 from pr_review.meta import BeadMismatch, resolve_bead
-from pr_review.services import Beads, GitHub, PullRequest
-from pr_review.shell import Runner, must
+from pr_review.services import Beads, GitHub, PullRequest, desktop_notify
+from pr_review.shell import Runner, must, run
 from pr_review.verdict import (
     MARKER_PREFIX,
     REFUSED_PREFIX,
@@ -26,6 +27,12 @@ from pr_review.verdict import (
 
 log = logging.getLogger("pr_review")
 TAIL_LINES = 15
+Notify = Callable[[str, str], None]
+DEFAULT_PRIORITY = 2
+
+
+def _desktop(title: str, text: str) -> None:
+    desktop_notify(run, title, text)
 
 
 @dataclass
@@ -41,6 +48,7 @@ class Context:
     model: str | None = None
     ollama_host: str = local_agent.DEFAULT_HOST
     post: local_agent.Post = local_agent.http_post
+    notify: Notify = _desktop
     _baseline: dict[str, GateOutput] = field(default_factory=dict)
 
     def baseline(self) -> GateOutput:
@@ -106,29 +114,85 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
         return Verdict(False, "Rebase onto origin/main failed.", (problem,))
 
 
-def _act(ctx: Context, pr: PullRequest, bead: str, verdict: Verdict) -> str:
-    comment = review_comment(verdict, pr.head_sha)
-    if verdict.approve:
-        _say(ctx, pr, f"approve, rebase-merge, close {bead}")
-        if not ctx.dry_run:
-            ctx.github.post_review(pr, comment, approve=True)
-            ctx.github.merge(pr)
-            ctx.beads.close(bead, pr)
-            ctx.beads.push()
-        return "merged"
-    _say(ctx, pr, f"changes needed, {len(verdict.problems)} tech-debt issue(s)")
+def _open(rows: list[dict[str, object]]) -> list[str]:
+    return [str(r["id"]) for r in rows if r.get("status") != "closed"]
+
+
+def _file_debt(ctx: Context, verdict: Verdict, bead: str, pr: PullRequest) -> list[str]:
+    return [ctx.beads.create(debt_issue_args(p, bead, pr.number)) for p in verdict.debt()]
+
+
+def _merge(ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, fix_ids: list[str]) -> str:
+    _say(ctx, pr, f"approve, rebase-merge, close {' '.join([bead, *fix_ids])}")
+    if not ctx.dry_run:
+        ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=True)
+        ctx.github.merge(pr)
+        _file_debt(ctx, verdict, bead, pr)
+        for issue in [bead, *fix_ids]:
+            ctx.beads.close(issue, pr)
+        ctx.beads.push()
+    return "merged"
+
+
+def _escalate(
+    ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, fix_ids: list[str]
+) -> str:
+    """Second rejection: stop the automatic loop and hand the ticket to a human."""
+    _say(ctx, pr, f"rejected again after {fix_ids}: block {bead} for a human")
+    if not ctx.dry_run:
+        ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=False)
+        _file_debt(ctx, verdict, bead, pr)
+        ctx.beads.escalate(bead, fixes.escalation_note(pr, fix_ids))
+        ctx.github.add_label(pr, fixes.PR_HUMAN_LABEL)
+        ctx.notify("hermes-review: needs you", f"PR #{pr.number} ({bead}) rejected twice")
+        ctx.beads.push()
+    return "escalated"
+
+
+def _send_back(
+    ctx: Context, pr: PullRequest, bead: str, info: dict[str, object], verdict: Verdict
+) -> str:
+    """First rejection: one review-fix issue for Hermes, tech debt for out-of-scope problems."""
+    priority = fixes.fix_priority(verdict.fix_priority, int(info.get("priority", DEFAULT_PRIORITY)))  # type: ignore[call-overload]
+    _say(
+        ctx,
+        pr,
+        f"changes needed: review-fix P{priority}, {len(verdict.debt())} tech-debt",
+    )
     for problem in verdict.problems:
         _say(ctx, pr, f"  - {problem.location()} {problem.title}")
     if not ctx.dry_run:
-        ctx.github.post_review(pr, comment, approve=False)
-        ids = [ctx.beads.create(debt_issue_args(p, bead, pr.number)) for p in verdict.problems]
-        ctx.beads.note(bead, f"Review of PR #{pr.number}: changes needed; tech-debt {ids}")
+        ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=False)
+        args = fixes.fix_issue_args(verdict, verdict.blocking(), bead, pr, priority)
+        fix = ctx.beads.create(args)
+        debt = _file_debt(ctx, verdict, bead, pr)
+        ctx.beads.note(
+            bead,
+            f"Review of PR #{pr.number}: changes needed; review-fix {fix}; tech-debt {debt}",
+        )
         ctx.beads.push()
     return "changes-needed"
 
 
+def _act(
+    ctx: Context, pr: PullRequest, bead: str, info: dict[str, object], verdict: Verdict
+) -> str:
+    previous = ctx.beads.review_fixes(pr.number)
+    if verdict.approve:
+        return _merge(ctx, pr, bead, verdict, _open(previous))
+    if previous:
+        return _escalate(ctx, pr, bead, verdict, [str(r["id"]) for r in previous])
+    return _send_back(ctx, pr, bead, info, verdict)
+
+
+def _unfinished_fixes(ctx: Context, pr: PullRequest) -> list[str]:
+    """Open review-fix issues Hermes has not finished (no PR link in their notes yet)."""
+    ids = _open(ctx.beads.review_fixes(pr.number))
+    return [i for i in ids if pr.url not in str(ctx.beads.show(i).get("notes") or "")]
+
+
 def review_pr(ctx: Context, pr: PullRequest) -> str:
-    """Review one PR; returns refused | skipped | merged | changes-needed."""
+    """Review one PR; returns refused | skipped | waiting | escalated | merged | changes-needed."""
     if ctx.github.has_marker(pr, f"<!-- {MARKER_PREFIX}{pr.head_sha} -->"):
         return "skipped"
     try:
@@ -136,8 +200,14 @@ def review_pr(ctx: Context, pr: PullRequest) -> str:
     except BeadMismatch as exc:
         return _refuse(ctx, pr, f"cannot identify the bead: {exc}")
     info = ctx.beads.show(bead)
+    if info.get("status") == "blocked" and fixes.HUMAN_LABEL in (info.get("labels") or []):  # type: ignore[operator]
+        return "escalated"  # a human owns it now; stay quiet
     if info.get("status") != "in_progress" or pr.url not in str(info.get("notes") or ""):
         return _refuse(ctx, pr, f"{bead} is not in_progress with this PR's link in its notes")
+    unfinished = _unfinished_fixes(ctx, pr)
+    if unfinished:
+        _say(ctx, pr, f"waiting: Hermes has not finished {', '.join(unfinished)}")
+        return "waiting"
     _say(ctx, pr, f"reviewing {bead}")
     ref = fetch(ctx.run, ctx.repo, pr.number)
-    return _act(ctx, pr, bead, _verdict(ctx, pr, bead, ref))
+    return _act(ctx, pr, bead, info, _verdict(ctx, pr, bead, ref))

@@ -110,6 +110,7 @@ cat > "$tmp/bin/hermes" <<'S'
 #!/bin/sh
 # config get -> value; chat -> first call hangs (killed by timeout), later calls finish
 [ "$1" = config ] && { echo stub; exit 0; }
+echo "hermes $*" >> "$STUB_LOG"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_COUNT"
 echo "  ┊ 💻 \$ bd update ${STUB_PREFIX:-widgets}-abc --claim --json"
 if [ "$n" = 1 ] && [ "$STUB_HANG_FIRST" = 1 ]; then sleep 30; exit 0; fi
@@ -125,6 +126,7 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   echo "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin (ssh url)" || bad "derive ssh" "$out"
   ls "$W"/logs/run-*.log >/dev/null 2>&1 && [ ! -d "$ROOT/logs" ] && ok "logs written in the target repo, not the harness" || bad "log location" "$(ls "$W" "$ROOT")"
   [ $rc -eq 0 ] && ok "clean run exits 0" || bad "clean rc" "$rc $out"
+  grep -q '^hermes chat .*--pass-session-id' "$STUB_LOG" && ok "hermes gets --pass-session-id (for Hermes-Session in the PR)" || bad "pass-session-id" "$(grep '^hermes' "$STUB_LOG")"
   rm -rf "$W/logs" "$STUB_COUNT"
   # lock: a live pid holding the lock blocks a second instance
   mkdir -p "$W/logs/.run-beads.lock"; echo $$ > "$W/logs/.run-beads.lock/pid"

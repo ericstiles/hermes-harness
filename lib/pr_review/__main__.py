@@ -17,6 +17,7 @@ from pr_review.checks import ConfigError, load_config
 from pr_review.review import Context, review_pr
 from pr_review.services import Beads, GitHub
 from pr_review.shell import CommandError, run
+from pr_review.verdict import MARKER_PREFIX
 
 log = logging.getLogger("pr_review")
 # lib/pr_review/__main__.py -> harness root
@@ -53,15 +54,20 @@ def resolve_model(agent_name: str, explicit: str | None) -> str | None:
 def run_pass(ctx: Context, only: int | None) -> int:
     """One pass over the open bd/* PRs; returns the number of PRs that hit an error.
 
+    An idle pass (no PR with an unreviewed head commit) costs one `gh pr list` plus one
+    `gh pr view` per open PR; beads are pulled only when there is something to review.
     A dry run does not pull beads (it reads the local copy). It still fetches git refs and
     makes throwaway worktrees, which are scratch space and removed afterwards.
     """
+    prs = [p for p in ctx.github.open_bead_prs() if only is None or p.number == only]
+    todo = [p for p in prs if not ctx.github.has_marker(p, f"<!-- {MARKER_PREFIX}{p.head_sha} -->")]
+    log.info("%d open bd/* PR(s), %d with an unreviewed head", len(prs), len(todo))
+    if not todo:
+        return 0  # idle: one gh call, no beads sync, no model
     if not ctx.dry_run:
         ctx.beads.pull()
     errors = 0
-    prs = [p for p in ctx.github.open_bead_prs() if only is None or p.number == only]
-    log.info("%d open bd/* PR(s) to consider", len(prs))
-    for pr in prs:
+    for pr in todo:
         try:
             log.info("PR #%s: %s", pr.number, review_pr(ctx, pr))
         except (CommandError, ValueError) as exc:

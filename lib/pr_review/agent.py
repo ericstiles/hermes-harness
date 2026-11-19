@@ -14,16 +14,18 @@ READ_ONLY_TOOLS = "Read,Grep,Glob"
 DENIED_TOOLS = "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Agent"
 VERDICT_SCHEMA = {
     "type": "object",
-    "required": ["approve", "summary", "problems"],
+    "required": ["approve", "summary", "fix_priority", "problems"],
     "properties": {
         "approve": {"type": "boolean"},
         "summary": {"type": "string"},
+        "fix_priority": {"type": "string", "enum": ["high", "same"]},
         "problems": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["file", "title", "detail"],
+                "required": ["file", "title", "detail", "in_scope"],
                 "properties": {
+                    "in_scope": {"type": "boolean"},
                     "file": {"type": "string"},
                     "line": {"type": ["integer", "null"]},
                     "title": {"type": "string"},

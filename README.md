@@ -29,12 +29,27 @@ Runs on the host next to `hermes-run`. For each open, non-draft `bd/<id>` PR:
    the JSON verdict (Ollama `format` schema). `--agent claude` uses `claude -p` instead
    (read-only Read/Grep/Glob, run outside the PR checkout so the PR's `CLAUDE.md` is never
    loaded).
-4. **Act:** approved → review, `gh pr merge --rebase --match-head-commit`, `bd close
-   --force`, `bd dolt push` (pull and retry once if rejected). Otherwise → a comment listing
-   each problem, one `tech-debt` bead per problem (`discovered-from` the ticket, all 8
-   template sections), and a note on the ticket. It never merges a PR with problems.
+4. **Act** (the loop is drawn in `templates/AGENTS_WORKFLOW.md`, "Ticket lifecycle"):
+   - **Approve** → `gh pr merge --rebase --match-head-commit`, then close the ticket T and
+     every open `review-fix` issue for the PR (`bd close --force`), `bd dolt push`.
+   - **First rejection** → a comment listing each problem, and ONE `review-fix` issue F
+     (checklist of the in-scope problems, PR link, branch `bd/T`, `Hermes-Session`). Its
+     priority is P1 when the reviewer says `fix_priority: high`, else T's own priority.
+     Hermes picks F up next, pushes fixes to the same branch, and notes the PR on F; the
+     reviewer waits for that note before re-reviewing.
+   - **Second rejection** → T is set `blocked` with the `human` label (`bd human list`),
+     the PR gets the `needs-human` label, and a macOS notification fires once.
+   - Problems the reviewer marks out of scope never block: each becomes a `tech-debt` issue.
 
 A hidden `<!-- pr-review:<sha> -->` marker makes it review each head commit once.
+
+**Running it next to Hermes:** `cd <target repo> && hermes-review --watch 120` in its own
+herdr/tmux tab. Between passes it sleeps; an idle pass is one `gh pr list` plus one
+`gh pr view` per open PR, with no beads sync and no model call.
+
+**Human escalations:** you are told by a desktop notification, the `needs-human` PR label
+and `bd human list`. Then fix the PR yourself, or unblock T and file a clearer review-fix
+issue, or close the PR.
 
 **Checks** come from `hermes-review.json` at the target repo root (optional):
 

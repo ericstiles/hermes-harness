@@ -11,7 +11,9 @@ from pr_review.services import PullRequest
 from pr_review.verdict import Problem, Verdict
 
 URL = "https://github.com/o/r/pull/7"
-PR = PullRequest(7, "fix(om-1): thing", "Bead: om-1", "bd/om-1", "sha7", URL)
+PR = PullRequest(7, "fix(om-1): thing", "Bead: om-1\nHermes-Session: s1", "bd/om-1", "sha7", URL)
+INSIDE = Problem("a.py", 1, "A", "")
+OUTSIDE = Problem("z.py", 9, "Z", "", in_scope=False)
 
 
 class FakeGitHub:
@@ -31,14 +33,32 @@ class FakeGitHub:
     def merge(self, pr: PullRequest) -> None:
         self.calls.append(("merge", pr.number))
 
+    def add_label(self, pr: PullRequest, label: str) -> None:
+        self.calls.append(("label", label))
+
 
 class FakeBeads:
-    def __init__(self, status: str = "in_progress", notes: str = f"PR: {URL}") -> None:
-        self.info = {"status": status, "notes": notes}
+    def __init__(
+        self,
+        status: str = "in_progress",
+        notes: str = f"PR: {URL}",
+        fixes: list[dict[str, object]] | None = None,
+        labels: list[str] | None = None,
+    ) -> None:
+        self.info: dict[str, object] = {
+            "status": status, "notes": notes, "priority": 2, "labels": labels or [],
+        }  # fmt: skip
+        self.fixes = fixes or []
         self.calls: list[tuple[str, object]] = []
 
     def show(self, bead: str) -> dict[str, object]:
+        for fix in self.fixes:
+            if fix["id"] == bead:
+                return fix
         return self.info
+
+    def review_fixes(self, pr_number: int) -> list[dict[str, object]]:
+        return self.fixes
 
     def close(self, bead: str, pr: PullRequest) -> None:
         self.calls.append(("close", bead))
@@ -50,12 +70,18 @@ class FakeBeads:
     def note(self, bead: str, text: str) -> None:
         self.calls.append(("note", bead))
 
+    def escalate(self, bead: str, text: str) -> None:
+        self.calls.append(("escalate", bead))
+
     def push(self) -> None:
         self.calls.append(("push", None))
 
 
 def _ctx(gh: FakeGitHub, bd: FakeBeads, dry_run: bool = False) -> review.Context:
-    return review.Context(run=None, repo=Path("."), github=gh, beads=bd, dry_run=dry_run)  # type: ignore[arg-type]
+    ctx = review.Context(run=None, repo=Path("."), github=gh, beads=bd, dry_run=dry_run)  # type: ignore[arg-type]
+    ctx.notified = []  # type: ignore[attr-defined]
+    ctx.notify = lambda title, text: ctx.notified.append(text)  # type: ignore[attr-defined]
+    return ctx
 
 
 @pytest.fixture
@@ -71,6 +97,67 @@ def test_good_pr_is_approved_merged_and_closed(verdict: list[Verdict]) -> None:
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
     assert gh.calls == [("review", True), ("merge", 7)]
     assert bd.calls == [("close", "om-1"), ("push", None)]
+
+
+def test_merge_closes_the_ticket_and_its_open_review_fixes_only(
+    verdict: list[Verdict],
+) -> None:
+    fixes = [
+        {"id": "om-f1", "status": "closed", "notes": ""},
+        {"id": "om-f2", "status": "in_progress", "notes": f"PR: {URL}"},
+    ]
+    gh, bd = FakeGitHub(), FakeBeads(fixes=fixes)
+    assert review.review_pr(_ctx(gh, bd), PR) == "merged"
+    assert bd.calls == [("close", "om-1"), ("close", "om-f2"), ("push", None)]
+
+
+def test_approval_with_out_of_scope_problems_files_debt_and_merges(
+    verdict: list[Verdict],
+) -> None:
+    verdict[0] = Verdict(True, "ok", (OUTSIDE,))
+    gh, bd = FakeGitHub(), FakeBeads()
+    assert review.review_pr(_ctx(gh, bd), PR) == "merged"
+    assert ("merge", 7) in gh.calls
+    assert [c[0] for c in bd.calls] == ["create", "close", "push"]
+    assert bd.calls[0][1].startswith("Tech debt from PR #7")  # type: ignore[union-attr]
+
+
+def test_first_rejection_files_one_review_fix_plus_debt_for_out_of_scope(
+    verdict: list[Verdict],
+) -> None:
+    verdict[0] = Verdict(False, "no", (INSIDE, Problem("b.py", 2, "B", ""), OUTSIDE))
+    gh, bd = FakeGitHub(), FakeBeads()
+    assert review.review_pr(_ctx(gh, bd), PR) == "changes-needed"
+    assert gh.calls == [("review", False)]
+    assert bd.calls[0] == ("create", "Review fixes for PR #7 (om-1)")
+    assert bd.calls[1][0] == "create" and "Tech debt" in str(bd.calls[1][1])
+    assert [c[0] for c in bd.calls[2:]] == ["note", "push"]
+
+
+def test_second_rejection_escalates_to_the_human_once(verdict: list[Verdict]) -> None:
+    verdict[0] = Verdict(False, "still wrong", (INSIDE,))
+    fixes = [{"id": "om-f1", "status": "in_progress", "notes": f"PR: {URL}"}]
+    gh, bd = FakeGitHub(), FakeBeads(fixes=fixes)
+    ctx = _ctx(gh, bd)
+    assert review.review_pr(ctx, PR) == "escalated"
+    assert gh.calls == [("review", False), ("label", "needs-human")]
+    assert bd.calls == [("escalate", "om-1"), ("push", None)]  # no new review-fix
+    assert len(ctx.notified) == 1 and "PR #7" in ctx.notified[0]  # type: ignore[attr-defined]
+
+
+def test_new_commits_wait_until_hermes_notes_the_review_fix(
+    verdict: list[Verdict],
+) -> None:
+    fixes = [{"id": "om-f1", "status": "in_progress", "notes": ""}]
+    gh, bd = FakeGitHub(), FakeBeads(fixes=fixes)
+    assert review.review_pr(_ctx(gh, bd), PR) == "waiting"
+    assert gh.calls == [] and bd.calls == []
+
+
+def test_escalated_ticket_is_left_to_the_human(verdict: list[Verdict]) -> None:
+    gh, bd = FakeGitHub(), FakeBeads(status="blocked", labels=["human"])
+    assert review.review_pr(_ctx(gh, bd), PR) == "escalated"
+    assert gh.calls == [] and bd.calls == []
 
 
 def test_failed_merge_is_retried_on_the_next_pass(verdict: list[Verdict]) -> None:
@@ -89,19 +176,11 @@ def test_failed_merge_is_retried_on_the_next_pass(verdict: list[Verdict]) -> Non
     assert ("merge", 7) in gh.calls
 
 
-def test_bad_pr_files_one_debt_issue_per_problem_and_is_not_merged(
-    verdict: list[Verdict],
-) -> None:
-    verdict[0] = Verdict(False, "no", (Problem("a.py", 1, "A", ""), Problem("b.py", 2, "B", "")))
-    gh, bd = FakeGitHub(), FakeBeads()
-    assert review.review_pr(_ctx(gh, bd), PR) == "changes-needed"
-    assert gh.calls == [("review", False)]
-    assert [c[0] for c in bd.calls] == ["create", "create", "note", "push"]
-
-
 def test_dry_run_changes_nothing(verdict: list[Verdict]) -> None:
     gh, bd = FakeGitHub(), FakeBeads()
     assert review.review_pr(_ctx(gh, bd, dry_run=True), PR) == "merged"
+    verdict[0] = Verdict(False, "no", (INSIDE,))
+    assert review.review_pr(_ctx(gh, bd, dry_run=True), PR) == "changes-needed"
     assert gh.calls == [] and bd.calls == []
 
 
@@ -127,7 +206,9 @@ def test_already_reviewed_head_is_skipped(verdict: list[Verdict]) -> None:
     assert gh.calls == [] and bd.calls == []
 
 
-def test_refusal_is_posted_once_but_rechecked_until_fixed(verdict: list[Verdict]) -> None:
+def test_refusal_is_posted_once_but_rechecked_until_fixed(
+    verdict: list[Verdict],
+) -> None:
     gh, bd = FakeGitHub(), FakeBeads(notes="")
     assert review.review_pr(_ctx(gh, bd), PR) == "refused"
     assert review.review_pr(_ctx(gh, bd), PR) == "refused"

@@ -66,7 +66,10 @@ def test_open_bead_prs_filters_branch_and_drafts() -> None:
 
 
 def test_has_marker_searches_comments_and_reviews() -> None:
-    data = {"comments": [{"body": "x"}], "reviews": [{"body": "<!-- pr-review:sha7 -->\nok"}]}
+    data = {
+        "comments": [{"body": "x"}],
+        "reviews": [{"body": "<!-- pr-review:sha7 -->\nok"}],
+    }
     github = GitHub(FakeRun(lambda cmd: Result(0, json.dumps(data), "")))
     assert github.has_marker(PR, "<!-- pr-review:sha7 -->")
     assert not github.has_marker(PR, "<!-- pr-review:old -->")
@@ -77,7 +80,10 @@ def test_review_uses_reviewer_token_to_approve_else_comments() -> None:
     GitHub(fake, "tok").post_review(PR, "body", approve=True)
     GitHub(fake, "tok").post_review(PR, "body", approve=False)
     GitHub(fake).post_review(PR, "body", approve=True)
-    assert [c[0][3:5] for c in fake.calls[:2]] == [["7", "--approve"], ["7", "--request-changes"]]
+    assert [c[0][3:5] for c in fake.calls[:2]] == [
+        ["7", "--approve"],
+        ["7", "--request-changes"],
+    ]
     assert fake.calls[0][1] == {"GH_TOKEN": "tok"}
     assert fake.calls[2][0][:3] == ["gh", "pr", "comment"] and fake.calls[2][1] is None
 
@@ -117,7 +123,10 @@ def test_beads_push_pulls_and_retries_once_after_rejection() -> None:
 
 def test_gate_runs_each_check_and_keeps_output(tmp_path: Path) -> None:
     fake = FakeRun(lambda cmd: Result(1, f"out:{cmd[0]}", "err"))
-    checks = (Check("unit", ("pytest", "-q"), "pytest"), Check("lint", ("eslint",), "lines"))
+    checks = (
+        Check("unit", ("pytest", "-q"), "pytest"),
+        Check("lint", ("eslint",), "lines"),
+    )
     assert gate.run_gate(fake, tmp_path, checks) == {
         "unit": "out:pytesterr",
         "lint": "out:eslinterr",
@@ -125,7 +134,9 @@ def test_gate_runs_each_check_and_keeps_output(tmp_path: Path) -> None:
     assert [c[0] for c in fake.calls] == [["pytest", "-q"], ["eslint"]]
 
 
-def test_checkout_aborts_on_rebase_conflict_and_removes_worktree(tmp_path: Path) -> None:
+def test_checkout_aborts_on_rebase_conflict_and_removes_worktree(
+    tmp_path: Path,
+) -> None:
     fake = FakeRun(
         lambda cmd: Result(1, "", "CONFLICT") if cmd[1] == "rebase" else Result(0, "", "")
     )
@@ -169,6 +180,7 @@ def test_cli_run_pass_counts_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
     prs = [PR, PullRequest(8, "t", "b", "bd/om-2", "s", "u")]
     monkeypatch.setattr(Ctx.github, "open_bead_prs", lambda: prs)
+    monkeypatch.setattr(Ctx.github, "has_marker", lambda pr, marker: False)
     outcomes = iter(["merged", CommandError("boom")])
 
     def fake_review(ctx: object, pr: PullRequest) -> str:
@@ -190,4 +202,54 @@ def test_cli_dry_run_does_not_pull_beads(monkeypatch: pytest.MonkeyPatch) -> Non
         dry_run = True
 
     cli.run_pass(Ctx(), None)  # type: ignore[arg-type]
+    assert beads_run.calls == []
+
+
+def test_review_fixes_lists_labelled_issues_for_this_pr_only() -> None:
+    rows = [
+        {"id": "om-f1", "title": "Review fixes for PR #7 (om-1)", "status": "closed"},
+        {"id": "om-f9", "title": "Review fixes for PR #70 (om-9)", "status": "open"},
+    ]
+    fake = FakeRun(lambda cmd: Result(0, json.dumps(rows), ""))
+    assert [f["id"] for f in Beads(fake).review_fixes(7)] == ["om-f1"]
+    cmd = fake.calls[0][0]
+    assert cmd[:2] == ["bd", "list"] and "--all" in cmd and "review-fix" in cmd
+
+
+def test_escalate_blocks_and_flags_for_a_human() -> None:
+    fake = FakeRun()
+    Beads(fake).escalate("om-1", "why")
+    cmd = fake.calls[0][0]
+    assert cmd[:3] == ["bd", "update", "om-1"]
+    assert cmd[cmd.index("--status") + 1] == "blocked"
+    assert cmd[cmd.index("--add-label") + 1] == "human"
+
+
+def test_add_label_creates_the_label_then_adds_it() -> None:
+    fake = FakeRun()
+    GitHub(fake).add_label(PR, "needs-human")
+    assert fake.cmds() == ["gh label create needs-human", "gh pr edit 7"]
+    assert fake.calls[1][0][-2:] == ["--add-label", "needs-human"]
+
+
+def test_desktop_notify_uses_osascript_and_never_raises() -> None:
+    from pr_review.services import desktop_notify
+
+    fake = FakeRun(lambda cmd: Result(127, "", "missing"))
+    desktop_notify(fake, "hermes-review", 'PR #7 "needs" you')
+    assert fake.calls[0][0][0] == "osascript"
+
+
+def test_idle_watch_pass_makes_no_beads_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    beads_run = FakeRun()
+    reviewed = Result(0, json.dumps({"comments": [{"body": "<!-- pr-review:sha7 -->"}]}), "")
+
+    class Ctx:
+        github = GitHub(FakeRun(lambda cmd: reviewed))
+        beads = Beads(beads_run)
+        dry_run = False
+
+    monkeypatch.setattr(Ctx.github, "open_bead_prs", lambda: [PR])
+    monkeypatch.setattr(cli, "review_pr", lambda ctx, pr: "skipped")
+    assert cli.run_pass(Ctx(), None) == 0  # type: ignore[arg-type]
     assert beads_run.calls == []

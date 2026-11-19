@@ -16,9 +16,14 @@
 #                                `bd ready` lists the issue again
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
+#   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
 #
 # Every run's log ends with a line  RUN_RESULT=<CLASS>  (see lib/classify.sh)
 # so hermes-supervise can parse the outcome instead of grepping prose.
+# Logs per run: run-<stamp>.log is the RAW output (what the classifier reads);
+# run-<stamp>.timed.txt is the same output with [HH:MM:SS] on every line and
+# (+Ns) gaps, which is also what the terminal shows. The twin is deliberately
+# not *.log, so hermes-status/hermes-supervise never mistake it for a run log.
 set -uo pipefail
 
 # Resolve symlinks (hermes-* are symlinked onto PATH), then locate the harness.
@@ -31,6 +36,8 @@ hh_repo || exit 2
 cd "$REPO_ROOT" || exit 2
 # shellcheck source=../lib/classify.sh
 . "$HARNESS_HOME/lib/classify.sh"
+# shellcheck source=../lib/runtime.sh
+. "$HARNESS_HOME/lib/runtime.sh"
 
 MAX=${1:-10}
 # owner/name: $GITHUB_REPO, else parsed from the origin remote (see lib/common.sh)
@@ -87,11 +94,15 @@ done
 IMAGE=$(_cfg terminal.docker_image)
 echo "== repo: $REPO | model: ${MODEL:-unknown} | provider: ${PROVIDER:-unknown} | sandbox: ${IMAGE:-default} | timeout: $TIMEOUT | retry-on-timeout: $RETRY | max issues: $MAX"
 
+claimed_issue() { # <logfile> -> first issue id the run claimed, empty if none
+  tr -d '\r' < "$1" | sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' | head -n 1
+}
+
 # Release a claim left behind by a killed run so the next run can pick it up.
 unclaim_stale() { # <logfile>
   [ "$UNCLAIM" = 1 ] || return 0
   local id
-  id=$(tr -d '\r' < "$1" | sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' | head -n 1)
+  id=$(claimed_issue "$1")
   [ -n "$id" ] || { echo "note: could not find a claimed issue id in $1"; return 0; }
   bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; claim state may be stale"
   if bd list --status=in_progress 2>/dev/null | grep -q "$id"; then
@@ -103,19 +114,44 @@ unclaim_stale() { # <logfile>
   fi
 }
 
-# One Hermes run. Sets: log, status, class.
+# One Hermes run. Sets: log, timed, status, class.
 run_once() { # <timeout>
-  log="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
-  echo "== run $i/$MAX | model: ${MODEL:-unknown} | timeout: $1 -> $log"
+  local stamp start end issue; local -a ps
+  stamp=$(date +%Y%m%d-%H%M%S)
+  log="$LOG_DIR/run-$stamp.log"; timed="$LOG_DIR/run-$stamp.timed.txt"
+  echo "== run $i/$MAX | model: ${MODEL:-unknown} | timeout: $1 -> $log (timestamped: ${timed##*/})"
+  start=$(date +%s)
+  # Raw output goes to $log BEFORE the timestamp filter. SIGPIPE is ignored for
+  # this pipeline so that if the filter ever dies, tee keeps writing the raw log
+  # (and Hermes keeps running) instead of being killed by a broken pipe. BSD tee
+  # then reports "Broken pipe" on every write, so its stderr goes to a file, not
+  # the terminal. Degraded mode: no live terminal output until the run ends.
+  local tee_err="$LOG_DIR/.tee-stderr"
+  trap '' PIPE
   # shellcheck disable=SC2086  # HERMES_ARGS is intentionally word-split
   # --pass-session-id: Hermes sees its session id and writes `Hermes-Session:` in the PR.
-  "$TO" "$1" hermes chat --pass-session-id ${HERMES_ARGS:-} -q "$PROMPT" 2>&1 | tee "$log"
-  status=${PIPESTATUS[0]}
+  "$TO" "$1" hermes chat --pass-session-id ${HERMES_ARGS:-} -q "$PROMPT" 2>&1 \
+    | tee "$log" 2>"$tee_err" | python3 -u "$HARNESS_HOME/lib/tsfilter.py" --log "$timed"
+  ps=("${PIPESTATUS[@]}")
+  trap - PIPE
+  status=${ps[0]}; end=$(date +%s)
+  if [ "${ps[2]}" != 0 ]; then
+    echo "warning: timestamp filter failed (exit ${ps[2]}); live output stopped, the raw log still has everything: $log" >&2
+  elif [ "${ps[1]}" != 0 ]; then
+    echo "warning: tee failed writing the raw log (exit ${ps[1]}): $(head -n 1 "$tee_err" 2>/dev/null)" >&2
+  fi
+  rm -f "$tee_err"
   class=$(hermes_classify "$log" "$status")
   echo "RUN_RESULT=$class" | tee -a "$log"
+  issue=$(claimed_issue "$log")
+  RUN_TIME_LINE="RUN_TIME start=$(hh_hms "$start") end=$(hh_hms "$end") elapsed=$(hh_elapsed $((end - start))) issue=${issue:-unknown}"
+  echo "$RUN_TIME_LINE"
+  { hh_stamp_line "RUN_RESULT=$class"; hh_stamp_line "$RUN_TIME_LINE"; } >> "$timed" 2>/dev/null || true
+  runs=$((runs + 1))
 }
 
 final=OK_DONE
+loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
   run_once "$TIMEOUT"
   if [ "$class" = TIMEOUT ]; then
@@ -138,5 +174,7 @@ for i in $(seq 1 "$MAX"); do
     *) echo "Run ended as $class — stopping. See $log"; break ;;
   esac
 done
+loop_end=$(date +%s)
+echo "RUN_TIME total=$(hh_elapsed $((loop_end - loop_start))) start=$(hh_hms "$loop_start") end=$(hh_hms "$loop_end") runs=$runs"
 echo "FINAL_RESULT=$final"
 case "$final" in OK_DONE|QUEUE_EMPTY) exit 0 ;; *) exit 1 ;; esac

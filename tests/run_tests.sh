@@ -26,6 +26,9 @@ eq "exit code 124 wins" "$(hermes_classify "$FX/ok_done.log" 124)" TIMEOUT
 eq "missing file" "$(hermes_classify /nonexistent)" UNKNOWN
 eq "supervise --classify needs no repo" "$(cd "$tmp" && "$BIN/hermes-supervise" --classify "$FX/timeout_killed.log")" TIMEOUT
 
+# --- timestamps filter (lib/tsfilter.py) ---
+. "$HERE/timestamps_tests.sh"
+
 # --- supervise: output contract, read-only, no secrets ---
 sup() { (cd "$W" && "$BIN/hermes-supervise" "$@"); }
 before=$(git -C "$W" status --porcelain)
@@ -118,6 +121,7 @@ cat > "$tmp/bin/hermes" <<'S'
 [ "$1" = config ] && { echo stub; exit 0; }
 echo "hermes $*" >> "$STUB_LOG"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_COUNT"
+[ -n "$STUB_FIXTURE" ] && { cat "$STUB_FIXTURE"; exit "${STUB_EXIT:-0}"; }
 echo "  ┊ 💻 \$ bd update ${STUB_PREFIX:-widgets}-abc --claim --json"
 if [ "$n" = 1 ] && [ "$STUB_HANG_FIRST" = 1 ]; then sleep 30; exit 0; fi
 echo "PR https://github.com/o/r/pull/1"; echo; echo "Resume this session with:"; echo "Messages:       9 (1 user, 8 tool calls)"
@@ -160,6 +164,8 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
     out=$(runit "$BIN/hermes-run" 1 2>&1)
     echo "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin ($url)" || bad "derive $url" "$out"
   done
+  # timestamped twin log, RUN_TIME summaries, raw log unchanged
+  . "$HERE/run_timestamps_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

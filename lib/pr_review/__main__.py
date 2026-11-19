@@ -10,10 +10,12 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from pr_review import local_agent
 from pr_review.checks import ConfigError, load_config
+from pr_review.progress import fmt_duration
 from pr_review.review import Context, review_pr
 from pr_review.services import Beads, GitHub
 from pr_review.shell import CommandError, run
@@ -22,6 +24,27 @@ from pr_review.verdict import MARKER_PREFIX
 log = logging.getLogger("pr_review")
 # lib/pr_review/__main__.py -> harness root
 HARNESS_HOME = Path(os.environ.get("HARNESS_HOME") or Path(__file__).resolve().parents[2])
+
+
+HEARTBEAT_SECONDS = 60
+INTERRUPTED_EXIT = 130  # 128 + SIGINT, the shell convention for "stopped by Ctrl-C"
+
+
+def wait_for_next_pass(
+    seconds: int,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.time,
+) -> None:
+    """Sleep until the next watch pass, logging when it is due and a heartbeat each minute."""
+    due = time.strftime("%H:%M:%S", time.localtime(now() + seconds))
+    log.info("next check in %s (at %s)", fmt_duration(seconds), due)
+    remaining = seconds
+    while remaining > 0:
+        nap = min(HEARTBEAT_SECONDS, remaining)
+        sleep(nap)
+        remaining -= nap
+        if remaining > 0:
+            log.info("waiting: next check in %s", fmt_duration(remaining))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -66,17 +89,33 @@ def run_pass(ctx: Context, only: int | None) -> int:
         return 0  # idle: one gh call, no beads sync, no model
     if not ctx.dry_run:
         ctx.beads.pull()
+    log.info("starting review of %d PR(s)", len(todo))
     errors = 0
     for pr in todo:
+        began = time.monotonic()
         try:
-            log.info("PR #%s: %s", pr.number, review_pr(ctx, pr))
+            outcome = review_pr(ctx, pr)
+            log.info("PR #%s: %s in %s", pr.number, outcome, fmt_duration(time.monotonic() - began))
+        except KeyboardInterrupt:
+            log.info("interrupted while reviewing PR #%s", pr.number)
+            raise
         except (CommandError, ValueError) as exc:
             errors += 1
-            log.error("PR #%s: %s", pr.number, exc)
+            log.error("PR #%s: %s (after %s)", pr.number, exc, fmt_duration(time.monotonic() - began))
     return errors
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the reviewer. Ctrl-C is a request to stop: shut down quietly, no traceback."""
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        # Throwaway worktrees are removed by their `finally` blocks on the way out.
+        log.info("interrupted (Ctrl-C): shutting down")
+        return INTERRUPTED_EXIT
+
+
+def _main(argv: list[str] | None) -> int:
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", stream=sys.stdout)
     if args.skip_agent and not args.dry_run:
@@ -115,7 +154,11 @@ def main(argv: list[str] | None = None) -> int:
             errors = 1
         if args.watch <= 0:
             return 1 if errors else 0
-        time.sleep(args.watch)
+        try:
+            wait_for_next_pass(args.watch)
+        except KeyboardInterrupt:
+            log.info("stopped (Ctrl-C) while idle")
+            return 0
 
 
 if __name__ == "__main__":

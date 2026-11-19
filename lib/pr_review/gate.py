@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 from pr_review.checks import Check
+from pr_review.progress import fmt_duration
 from pr_review.shell import Runner, must
 
 GATE_TIMEOUT = 900.0
+log = logging.getLogger("pr_review")
 GateOutput = dict[str, str]  # check name -> combined output
 
 
@@ -50,6 +54,9 @@ def run_gate(run: Runner, tree: Path, checks: tuple[Check, ...]) -> GateOutput:
     """Run every check in `tree`; output is kept (stdout + stderr), exit codes are not."""
     outputs = {}
     for check in checks:
+        log.info("check %s: running ...", check.name)
+        began = time.monotonic()
         result = run(list(check.cmd), cwd=tree, timeout=GATE_TIMEOUT)
         outputs[check.name] = result.out + result.err
+        log.info("check %s: exit %s in %s", check.name, result.code, fmt_duration(time.monotonic() - began))
     return outputs

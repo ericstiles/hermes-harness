@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from pr_review import agent, fixes, local_agent
 from pr_review.checks import ReviewConfig, new_problems
 from pr_review.gate import GateOutput, RebaseConflict, checkout, fetch, run_gate
 from pr_review.meta import BeadMismatch, resolve_bead
+from pr_review.progress import step
 from pr_review.services import Beads, GitHub, PullRequest, desktop_notify
 from pr_review.shell import Runner, must, run
 from pr_review.verdict import (
@@ -55,8 +57,9 @@ class Context:
         """Check output on origin/main, computed once per main commit."""
         sha = must(self.run(["git", "rev-parse", "origin/main"], cwd=self.repo), "rev-parse").out
         if sha not in self._baseline:
-            with checkout(self.run, self.repo, "origin/main", rebase_onto_main=False) as tree:
-                self._baseline[sha] = run_gate(self.run, tree, self.config.checks)
+            with step("checks on origin/main (baseline, once per main commit)"):
+                with checkout(self.run, self.repo, "origin/main", rebase_onto_main=False) as tree:
+                    self._baseline[sha] = run_gate(self.run, tree, self.config.checks)
         return self._baseline[sha]
 
 
@@ -91,24 +94,41 @@ def _ask(ctx: Context, tree: Path, bead: str, pr: PullRequest, diff: str, report
         ctx.config.instructions.read_text(encoding="utf-8"),
         ctx.beads.text(bead), pr.body, diff, report,
     )  # fmt: skip
+    label = f"PR #{pr.number}: asking {ctx.model or ctx.agent}"
     if ctx.agent == "claude":
-        return agent.ask(ctx.run, tree, prompt, ctx.model)
+        with step(label, f"(prompt {len(prompt)} chars)"):
+            return agent.ask(ctx.run, tree, prompt, ctx.model)
     files = local_agent.changed_files(ctx.run, tree)
     prompt += "\n\n## Changed files (full text after the PR)\n" + files
-    return local_agent.ask(ctx.post, ctx.ollama_host, ctx.model or "", prompt)
+    with step(label, f"(prompt {len(prompt)} chars)"):
+        return local_agent.ask(ctx.post, ctx.ollama_host, ctx.model or "", prompt)
 
 
 def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
     base = ctx.baseline()
+    tag = f"PR #{pr.number}"
     try:
-        with checkout(ctx.run, ctx.repo, ref, rebase_onto_main=True) as tree:
-            found, report = _checks_report(ctx, base, run_gate(ctx.run, tree, ctx.config.checks))
-            diff = must(ctx.run(["git", "diff", "origin/main...HEAD"], cwd=tree), "git diff").out
+        with ExitStack() as stack:
+            with step(f"{tag}: rebase onto origin/main"):
+                tree = stack.enter_context(
+                    checkout(ctx.run, ctx.repo, ref, rebase_onto_main=True)
+                )
+            with step(f"{tag}: running checks"):
+                gate_output = run_gate(ctx.run, tree, ctx.config.checks)
+            found, report = _checks_report(ctx, base, gate_output)
+            log.info("%s: checks found %d new problem(s)", tag, len(found))
+            with step(f"{tag}: building the diff"):
+                diff = must(ctx.run(["git", "diff", "origin/main...HEAD"], cwd=tree), "git diff").out
             if ctx.skip_agent:
                 verdict = Verdict(False, "Reviewer agent skipped (--skip-agent).", ())
             else:
                 verdict = parse_verdict(_ask(ctx, tree, bead, pr, diff, report))
-            return with_checks(verdict, found)
+            verdict = with_checks(verdict, found)
+            log.info(
+                "%s: reviewer verdict: %s, %d problem(s)",
+                tag, "approve" if verdict.approve else "changes needed", len(verdict.problems),
+            )  # fmt: skip
+            return verdict
     except RebaseConflict as exc:
         problem = Problem("", None, "Does not rebase cleanly onto main", str(exc))
         return Verdict(False, "Rebase onto origin/main failed.", (problem,))

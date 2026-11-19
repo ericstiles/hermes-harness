@@ -52,6 +52,8 @@ echo "$out" | grep -q '^ACTION=ASK_HUMAN$' && ok "supervise outside a git repo a
 # --- launch: refusals and repo-agnostic command ---
 # herdr/tmux are stubbed to fail so a test can never open a real tab or session.
 mkdir -p "$tmp/nohost"; for c in herdr tmux; do printf '#!/bin/sh\necho "STUB %s called: $*" >> "%s/host_calls.log"\nexit 1\n' "$c" "$tmp" > "$tmp/nohost/$c"; chmod +x "$tmp/nohost/$c"; done
+# `ps` is stubbed to "no processes" so a REAL Hermes run on this machine cannot affect the tests.
+printf '#!/bin/sh\nexit 0\n' > "$tmp/nohost/ps"; chmod +x "$tmp/nohost/ps"
 export PATH="$tmp/nohost:$PATH"
 out=$(cd "$W" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 1 ] && echo "$out" | grep -q GH_TOKEN && ok "launch refuses without GH_TOKEN" || bad "launch token refusal" "$rc $out"
@@ -78,6 +80,10 @@ out=$(cd "$tmp" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 
 rm -rf "$W/logs"; (cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run >/dev/null 2>&1)
 [ ! -e "$W/logs" ] && ok "--dry-run creates nothing in the repo" || bad "dry-run side effect" "$(ls -a "$W/logs")"
+# an active run (stubbed ps) blocks a launch, in --dry-run too
+mkdir -p "$tmp/busy"; printf '#!/bin/sh\necho "123 bash /x/bin/hermes-run 10"\n' > "$tmp/busy/ps"; chmod +x "$tmp/busy/ps"
+out=$(cd "$W" && PATH="$tmp/busy:$PATH" GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
+[ $rc -eq 1 ] && echo "$out" | grep -q 'already running' && ok "dry-run refuses while a run is active" || bad "active run refusal" "$rc $out"
 # --- launch --help / -h: detailed, no side effects, works anywhere without a token ---
 for flag in -h --help; do
   out=$(cd "$tmp" && env -u GH_TOKEN "$BIN/hermes-launch" "$flag" 2>&1); rc=$?

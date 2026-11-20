@@ -140,9 +140,11 @@ def test_checkout_aborts_on_rebase_conflict_and_removes_worktree(
     fake = FakeRun(
         lambda cmd: Result(1, "", "CONFLICT") if cmd[1] == "rebase" else Result(0, "", "")
     )
-    with pytest.raises(gate.RebaseConflict, match="CONFLICT"):
-        with gate.checkout(fake, tmp_path, "ref", rebase_onto_main=True):
-            pass
+    with (
+        pytest.raises(gate.RebaseConflict, match="CONFLICT"),
+        gate.checkout(fake, tmp_path, "ref", rebase_onto_main=True),
+    ):
+        pass
     assert [c[0][1] for c in fake.calls] == ["worktree", "rebase", "rebase", "worktree"]
     assert fake.calls[-1][0][2] == "remove"
 

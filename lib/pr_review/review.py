@@ -57,9 +57,11 @@ class Context:
         """Check output on origin/main, computed once per main commit."""
         sha = must(self.run(["git", "rev-parse", "origin/main"], cwd=self.repo), "rev-parse").out
         if sha not in self._baseline:
-            with step("checks on origin/main (baseline, once per main commit)"):
-                with checkout(self.run, self.repo, "origin/main", rebase_onto_main=False) as tree:
-                    self._baseline[sha] = run_gate(self.run, tree, self.config.checks)
+            with (
+                step("checks on origin/main (baseline, once per main commit)"),
+                checkout(self.run, self.repo, "origin/main", rebase_onto_main=False) as tree,
+            ):
+                self._baseline[sha] = run_gate(self.run, tree, self.config.checks)
         return self._baseline[sha]
 
 

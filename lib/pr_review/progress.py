@@ -12,7 +12,7 @@ log = logging.getLogger("pr_review")
 
 def fmt_duration(seconds: float) -> str:
     """`42s`, `2m30s`: minutes appear once there is at least one."""
-    minutes, secs = divmod(int(round(seconds)), 60)
+    minutes, secs = divmod(round(seconds), 60)
     return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
 
 

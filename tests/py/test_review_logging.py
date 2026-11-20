@@ -33,18 +33,22 @@ def test_duration_is_minutes_and_seconds(seconds: int, text: str) -> None:
 
 def test_step_logs_start_and_elapsed_time(caplog: pytest.LogCaptureFixture) -> None:
     ticks = iter([100.0, 142.0])
-    with caplog.at_level(logging.INFO, logger="pr_review"):
-        with progress.step("running checks", clock=lambda: next(ticks)):
-            pass
+    with (
+        caplog.at_level(logging.INFO, logger="pr_review"),
+        progress.step("running checks", clock=lambda: next(ticks)),
+    ):
+        pass
     assert _messages(caplog) == ["running checks ...", "running checks: done in 42s"]
 
 
 def test_step_logs_failure_with_elapsed_time(caplog: pytest.LogCaptureFixture) -> None:
     ticks = iter([0.0, 7.0])
-    with caplog.at_level(logging.INFO, logger="pr_review"):
-        with pytest.raises(RuntimeError):
-            with progress.step("asking model", clock=lambda: next(ticks)):
-                raise RuntimeError("boom")
+    with (
+        caplog.at_level(logging.INFO, logger="pr_review"),
+        pytest.raises(RuntimeError),
+        progress.step("asking model", clock=lambda: next(ticks)),
+    ):
+        raise RuntimeError("boom")
     assert _messages(caplog)[-1] == "asking model: FAILED after 7s (RuntimeError: boom)"
 
 
@@ -175,10 +179,12 @@ def test_run_pass_logs_outcome_with_total_review_time(
 
 def test_step_logs_an_interrupt_and_lets_it_propagate(caplog: pytest.LogCaptureFixture) -> None:
     ticks = iter([0.0, 9.0])
-    with caplog.at_level(logging.INFO, logger="pr_review"):
-        with pytest.raises(KeyboardInterrupt):
-            with progress.step("asking model", clock=lambda: next(ticks)):
-                raise KeyboardInterrupt
+    with (
+        caplog.at_level(logging.INFO, logger="pr_review"),
+        pytest.raises(KeyboardInterrupt),
+        progress.step("asking model", clock=lambda: next(ticks)),
+    ):
+        raise KeyboardInterrupt
     assert _messages(caplog)[-1] == "asking model: interrupted after 9s"
 
 
@@ -202,9 +208,8 @@ def test_run_pass_names_the_pr_being_reviewed_when_interrupted(
     ctx = _ctx()
     ctx.github, ctx.beads = GH(), Beads()  # type: ignore[assignment]
     monkeypatch.setattr(cli, "review_pr", interrupted)
-    with caplog.at_level(logging.INFO, logger="pr_review"):
-        with pytest.raises(KeyboardInterrupt):
-            cli.run_pass(ctx, None)
+    with caplog.at_level(logging.INFO, logger="pr_review"), pytest.raises(KeyboardInterrupt):
+        cli.run_pass(ctx, None)
     assert "interrupted while reviewing PR #7" in _messages(caplog)
 
 

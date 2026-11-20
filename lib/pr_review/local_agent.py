@@ -43,7 +43,7 @@ def hermes_model(config: Path = HERMES_CONFIG) -> str | None:
 def http_post(url: str, payload: dict[str, object], timeout: float) -> dict[str, object]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (local host)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

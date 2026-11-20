@@ -1,7 +1,7 @@
 # Lint and format settings for the hermes-review Python code (lib/pr_review, tests/py).
 # Checked by tests/run_tests.sh, so results do not depend on anyone's global ruff config.
 line-length = 100
-target-version = "py312"
+target-version = "py310"  # bin/hermes-review requires python >= 3.10
 src = ["lib", "tests/py"]
 
 [lint]

@@ -101,7 +101,9 @@ def run_pass(ctx: Context, only: int | None) -> int:
             raise
         except (CommandError, ValueError) as exc:
             errors += 1
-            log.error("PR #%s: %s (after %s)", pr.number, exc, fmt_duration(time.monotonic() - began))
+            log.error(
+                "PR #%s: %s (after %s)", pr.number, exc, fmt_duration(time.monotonic() - began)
+            )
     return errors
 
 

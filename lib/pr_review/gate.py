@@ -58,5 +58,10 @@ def run_gate(run: Runner, tree: Path, checks: tuple[Check, ...]) -> GateOutput:
         began = time.monotonic()
         result = run(list(check.cmd), cwd=tree, timeout=GATE_TIMEOUT)
         outputs[check.name] = result.out + result.err
-        log.info("check %s: exit %s in %s", check.name, result.code, fmt_duration(time.monotonic() - began))
+        log.info(
+            "check %s: exit %s in %s",
+            check.name,
+            result.code,
+            fmt_duration(time.monotonic() - began),
+        )
     return outputs

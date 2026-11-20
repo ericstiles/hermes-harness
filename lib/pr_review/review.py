@@ -110,15 +110,15 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
     try:
         with ExitStack() as stack:
             with step(f"{tag}: rebase onto origin/main"):
-                tree = stack.enter_context(
-                    checkout(ctx.run, ctx.repo, ref, rebase_onto_main=True)
-                )
+                tree = stack.enter_context(checkout(ctx.run, ctx.repo, ref, rebase_onto_main=True))
             with step(f"{tag}: running checks"):
                 gate_output = run_gate(ctx.run, tree, ctx.config.checks)
             found, report = _checks_report(ctx, base, gate_output)
             log.info("%s: checks found %d new problem(s)", tag, len(found))
             with step(f"{tag}: building the diff"):
-                diff = must(ctx.run(["git", "diff", "origin/main...HEAD"], cwd=tree), "git diff").out
+                diff = must(
+                    ctx.run(["git", "diff", "origin/main...HEAD"], cwd=tree), "git diff"
+                ).out
             if ctx.skip_agent:
                 verdict = Verdict(False, "Reviewer agent skipped (--skip-agent).", ())
             else:

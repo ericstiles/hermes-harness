@@ -63,6 +63,9 @@ RETRY=${HERMES_RETRY_ON_TIMEOUT:-0}
 UNCLAIM=${HERMES_UNCLAIM_ON_TIMEOUT:-1}
 TIMEOUT_CAP_MIN=${HERMES_TIMEOUT_CAP:-120}; TIMEOUT_CAP_MIN=${TIMEOUT_CAP_MIN%m}
 RESUME_ON_STOP=${HERMES_RESUME_ON_STOP:-1}
+# Marks these Hermes sessions as unattended harness runs. Hermes passes its environment to
+# shell hooks, so lib/hooks/bd_notes_guard.py acts only here, not in interactive Hermes.
+export HERMES_HARNESS_RUN=1
 : "${GH_TOKEN:?export GH_TOKEN (fine-grained, this repo only)}"
 
 # macOS has no `timeout` by default; coreutils provides gtimeout.

@@ -114,6 +114,13 @@ that runs `bd update ... --notes` (which replaces a bead's whole notes field, PR
 and tells the agent to use `--append-notes` and check with `bd show`. Everything else passes.
 Hermes runs hooks on the host, not in the sandbox; a broken hook fails open.
 
+**Only in harness runs.** Hermes has one config per Hermes home (`~/.hermes`), not per repo, so
+a hook there fires for every Hermes session on the machine. The guard therefore acts only when
+`HERMES_HARNESS_RUN=1`, which `hermes-run` exports (Hermes passes its environment to hooks).
+Interactive Hermes and anything else you use Hermes for are unaffected, in any repo.
+(Per-project Hermes settings are possible only through a separate Hermes home: a profile,
+`hermes -p <name>`, or `HERMES_HOME`. That duplicates config, memory and skills; not used here.)
+
 Add to `~/.hermes/config.yaml`:
 ```yaml
 hooks:

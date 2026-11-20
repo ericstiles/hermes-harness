@@ -141,6 +141,7 @@ cat > "$tmp/bin/hermes" <<'S'
 # config get -> value; chat -> first call hangs (killed by timeout), later calls finish
 [ "$1" = config ] && { echo stub; exit 0; }
 echo "hermes $*" >> "$STUB_LOG"
+echo "env HERMES_HARNESS_RUN=${HERMES_HARNESS_RUN:-}" >> "$STUB_LOG"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_COUNT"
 f=$STUB_FIXTURE; [ "$n" -ge 2 ] && [ -n "$STUB_FIXTURE_2" ] && f=$STUB_FIXTURE_2
 [ -n "$f" ] && { cat "$f"; exit "${STUB_EXIT:-0}"; }

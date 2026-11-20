@@ -9,6 +9,8 @@ Wire protocol (~/.hermes/hermes-agent/agent/shell_hooks.py): Hermes pipes
 {"tool_name": ..., "tool_input": {"command": ...}, ...} on stdin; printing
 {"decision": "block", "reason": ...} blocks the call. Anything else (no output, exit 0)
 allows it. Malformed input fails open with a log line on stderr.
+Only active when HERMES_HARNESS_RUN=1 (exported by bin/hermes-run); Hermes passes its own
+environment to hooks, so interactive and other Hermes sessions are never affected.
 Python 3.9 compatible (the macOS system python3).
 """
 
@@ -24,6 +26,7 @@ REASON = (
     "Blocked: `bd update --notes` replaces the whole notes field and does not read @file. "
     'Use `bd update <id> --append-notes "<line>"`, then `bd show <id>` to verify.'
 )
+GATE_VAR = "HERMES_HARNESS_RUN"  # set to 1 by bin/hermes-run; otherwise the hook allows all
 _OPERATORS = {";", "&&", "||", "|", "&", "\n"}
 _NOTES = re.compile(r"--notes(=|$)")
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
@@ -89,6 +92,10 @@ def blocked(command: str) -> bool:
 
 
 def main() -> int:
+    # The hook lives in the machine-wide ~/.hermes/config.yaml, so it fires for every Hermes
+    # session; it only acts in unattended hermes-run sessions, which export this variable.
+    if os.environ.get(GATE_VAR) != "1":
+        return 0
     try:
         payload = json.loads(sys.stdin.read())
         if payload.get("tool_name") != "terminal":

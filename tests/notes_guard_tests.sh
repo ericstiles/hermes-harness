@@ -3,6 +3,8 @@
 # lib/hooks/bd_notes_guard.py must block `bd update ... --notes` (it replaces the whole notes
 # field; incident 2026-11-19 wiped a bead's PR link) and allow everything else.
 NG="$ROOT/lib/hooks/bd_notes_guard.py"
+# The hook only acts in hermes-run sessions (hermes-run exports HERMES_HARNESS_RUN=1); the
+# helpers set it per call so it never leaks into the hermes-run tests.
 
 ng_payload() { # <tool_name> <command> -> the stdin JSON Hermes sends
   python3 -c 'import json,sys; print(json.dumps({"hook_event_name": "pre_tool_call",
@@ -11,13 +13,13 @@ ng_payload() { # <tool_name> <command> -> the stdin JSON Hermes sends
 }
 ng_blocks() { # <name> <command>
   local out rc
-  out=$(ng_payload terminal "$2" | "$NG" 2>/dev/null); rc=$?
+  out=$(ng_payload terminal "$2" | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null); rc=$?
   [ $rc -eq 0 ] && echo "$out" | grep -q '"decision": "block"' && echo "$out" | grep -q -- '--append-notes' \
     && ok "notes guard: blocks $1" || bad "notes guard: blocks $1" "rc=$rc $out"
 }
 ng_allows() { # <name> <command> [tool]
   local out rc
-  out=$(ng_payload "${3:-terminal}" "$2" | "$NG" 2>/dev/null); rc=$?
+  out=$(ng_payload "${3:-terminal}" "$2" | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null); rc=$?
   [ $rc -eq 0 ] && [ -z "$out" ] && ok "notes guard: allows $1" || bad "notes guard: allows $1" "rc=$rc $out"
 }
 
@@ -37,6 +39,11 @@ ng_allows "an append-notes value that is exactly --notes" "bd update om-1 --appe
 ng_allows "bd show / bd create" 'bd show om-1 && bd create "t" --notes x'
 ng_allows "unrelated commands" 'git log --notes; echo update --notes'
 ng_allows "non-terminal tools" 'bd update om-1 --notes x' execute_code
+out=$(ng_payload terminal 'bd update om-1 --notes x' | env -u HERMES_HARNESS_RUN "$NG" 2>/dev/null); rc=$?
+[ $rc -eq 0 ] && [ -z "$out" ] && ok "notes guard: does nothing outside a hermes-run session" \
+  || bad "notes guard: outside hermes-run" "rc=$rc $out"
+out=$(ng_payload terminal 'bd update om-1 --notes x' | HERMES_HARNESS_RUN=0 "$NG" 2>/dev/null)
+[ -z "$out" ] && ok "notes guard: HERMES_HARNESS_RUN=0 counts as outside" || bad "notes guard: =0" "$out"
 
 # The workflow template states the same rule the hook enforces (hermes-harness-xgc).
 TPL="$ROOT/templates/AGENTS_WORKFLOW.md"
@@ -49,8 +56,8 @@ grep -q 'no `@file`' "$TPL" && ok "template: no @file on bd flags" || bad "templ
 [ "$(grep -c 'verify with `bd show' "$TPL")" -ge 2 ] && ok "template: verify-after-write in the normal and review-fix paths" \
   || bad "template: verify step" "$(grep -c 'verify with `bd show' "$TPL")"
 
-out=$(printf 'not json' | "$NG" 2>&1 >/dev/null); rc=$?
+out=$(printf 'not json' | HERMES_HARNESS_RUN=1 "$NG" 2>&1 >/dev/null); rc=$?
 [ $rc -eq 0 ] && echo "$out" | grep -q 'bd_notes_guard' && ok "notes guard: malformed payload fails open with a log line" \
   || bad "notes guard: malformed payload" "rc=$rc $out"
-out=$(printf '{"tool_name":"terminal","tool_input":null}' | "$NG" 2>/dev/null); rc=$?
+out=$(printf '{"tool_name":"terminal","tool_input":null}' | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null); rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && ok "notes guard: missing tool_input is allowed" || bad "notes guard: no tool_input" "rc=$rc $out"

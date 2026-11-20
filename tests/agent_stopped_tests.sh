@@ -15,6 +15,9 @@ calls=$(grep -c '^hermes chat' "$STUB_LOG")
 second=$(grep '^hermes chat' "$STUB_LOG" | sed -n 2p)
 [ "$calls" = 2 ] && echo "$second" | grep -q -- "--resume $SID" && echo "$second" | grep -q -- '--pass-session-id' \
   && ok "agent_stopped: hermes-run resumes the same session once" || bad "agent_stopped: resume" "$calls | $second"
+[ "$(grep -c '^env HERMES_HARNESS_RUN=1$' "$STUB_LOG")" = 2 ] && [ -z "${HERMES_HARNESS_RUN:-}" ] \
+  && ok "hermes-run sets HERMES_HARNESS_RUN=1 for every hermes chat (gates the notes guard hook)" \
+  || bad "hermes-run HERMES_HARNESS_RUN" "$(grep '^env' "$STUB_LOG")"
 echo "$second" | grep -q 'No human is present' && ok "agent_stopped: the resume prompt says no human is present" || bad "agent_stopped: resume prompt" "$second"
 [ $rc -eq 0 ] && echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && ok "agent_stopped: a successful resume counts as OK_DONE" || bad "agent_stopped: resume result" "$rc $(echo "$out" | tail -4)"
 [ "$(ls "$W"/logs/run-*.log | wc -l | tr -d ' ')" = 2 ] && grep -q '^RUN_RESULT=AGENT_STOPPED$' "$W"/logs/run-*.log \

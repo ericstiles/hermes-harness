@@ -58,6 +58,12 @@ overrides the global "do not commit or push" default for this workflow only.
 ```
 
 - Start with `bd prime`. Use `bd` for all tracking; no markdown TODOs.
+- **Never replace notes** (`bd update --notes` is blocked: it erases the PR
+  link). Only `bd update <id> --append-notes "<line>"`. To tick a checklist
+  item, append `- [x] <item>: <evidence>`; never rewrite old lines. Pass
+  no `@file` to a bd flag unless `bd <cmd> --help` says it reads files.
+  After every bd write, verify with `bd show <id>`; if it did not land, fix it
+  or print `RUN_BLOCKED`.
 - **No human is present.** These runs are unattended: nobody reads your
   messages until the run is over and nobody will answer a question. Never ask
   a question, offer options, or wait for confirmation. A reply without a tool
@@ -75,7 +81,8 @@ overrides the global "do not commit or push" default for this workflow only.
   4. If tests pass: commit, push the branch, open a PR with `gh pr create`
      (base `main`) titled `<type>(<id>): <summary>` with these lines in the
      body: `Bead: <id>` and `Hermes-Session: <your session id>` (from your
-     system prompt). Then `bd update <id> --append-notes "PR: <url>"`. Do NOT
+     system prompt). Then `bd update <id> --append-notes "PR: <url>"` and
+     verify with `bd show <id>` that the `PR:` line is there. Do NOT
      close the issue: it stays `in_progress` so its dependents stay blocked
      until the PR is merged; the reviewer (`hermes-review`) closes it on merge.
      Print the full PR URL on its own line in your final message.
@@ -92,7 +99,8 @@ overrides the global "do not commit or push" default for this workflow only.
      Run tests and lint.
   4. Commit and `git push origin bd/<T>`. Do NOT open a new PR, do NOT
      force-push, do NOT touch the PR title or the `Bead: <T>` line.
-  5. `bd update <F> --append-notes "PR: <url>"`. Do NOT close F or T: the
+  5. `bd update <F> --append-notes "PR: <url>"`, then verify with `bd show <F>`
+     and `bd show <T>` that both still have their `PR:` line. Do NOT close F or T: the
      reviewer closes both when it merges the PR. Print the PR URL on its own
      line.
   6. A point you cannot fix in this PR's scope: file it as a new issue (rules

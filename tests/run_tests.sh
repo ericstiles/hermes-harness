@@ -28,6 +28,8 @@ eq "supervise --classify needs no repo" "$(cd "$tmp" && "$BIN/hermes-supervise" 
 
 # --- timestamps filter (lib/tsfilter.py) ---
 . "$HERE/timestamps_tests.sh"
+# --- Hermes pre_tool_call hook: block bd update --notes (lib/hooks/bd_notes_guard.py) ---
+. "$HERE/notes_guard_tests.sh"
 
 # --- supervise: output contract, read-only, no secrets ---
 sup() { (cd "$W" && "$BIN/hermes-supervise" "$@"); }
@@ -207,7 +209,7 @@ if command -v uv >/dev/null 2>&1; then
   # Lint + format with the repo's ruff.toml (pinned ruff, so results do not drift).
   for lint in "check --output-format concise" "format --check"; do
     # shellcheck disable=SC2086  # $lint is two words on purpose
-    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review tests/py 2>&1); rc=$?
+    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks tests/py 2>&1); rc=$?
     [ $rc -eq 0 ] && ok "ruff ${lint%% *}: clean" || bad "ruff ${lint%% *}" "$(echo "$out" | tail -n 20)"
   done
 else

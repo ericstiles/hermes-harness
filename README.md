@@ -108,6 +108,31 @@ hermes-launch --dry-run && hermes-launch
 The local reviewer and `hermes-run` share one Ollama. With the same model they share one
 loaded copy; a different `REVIEWER_MODEL` needs memory for both.
 
+## Notes guard hook (install once per machine)
+`lib/hooks/bd_notes_guard.py` is a Hermes `pre_tool_call` hook. It blocks any terminal command
+that runs `bd update ... --notes` (which replaces a bead's whole notes field, PR link included)
+and tells the agent to use `--append-notes` and check with `bd show`. Everything else passes.
+Hermes runs hooks on the host, not in the sandbox; a broken hook fails open.
+
+Add to `~/.hermes/config.yaml`:
+```yaml
+hooks:
+  pre_tool_call:
+    - matcher: terminal
+      command: /absolute/path/to/hermes-harness/lib/hooks/bd_notes_guard.py
+      timeout: 10
+```
+Then approve it once (unattended runs skip hooks that are not approved), and check it.
+Hermes records approvals only when an agent command starts (`chat`, `cron tick`, ...), not
+on `hermes hooks ...`; `cron tick` is the cheap one (it also runs any due cron jobs):
+```bash
+HERMES_ACCEPT_HOOKS=1 hermes cron tick     # records the approval
+hermes hooks doctor                        # must show it allowlisted
+echo '{"args":{"command":"bd update x --notes y"}}' > /tmp/p.json
+hermes hooks test pre_tool_call --payload-file /tmp/p.json   # must print a block
+```
+Editing the script changes its mtime; `hermes hooks doctor` then says to re-approve.
+
 ## Starting fresh (`--clean`)
 Hermes runs its commands in one persistent Docker container and clones the repo into
 `/workspace/<name>` there, so a run that stops mid-issue leaves its uncommitted work behind for

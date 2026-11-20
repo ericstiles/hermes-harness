@@ -118,6 +118,14 @@ Hermes runs hooks on the host, not in the sandbox; a broken hook fails open.
 a hook there fires for every Hermes session on the machine. The guard therefore acts only when
 `HERMES_HARNESS_RUN=1`, which `hermes-run` exports (Hermes passes its environment to hooks).
 Interactive Hermes and anything else you use Hermes for are unaffected, in any repo.
+To guard every Hermes session in one repo too, and to approve hooks without a separate step,
+put both in that repo's `.envrc.local` (git-ignored; direnv loads it):
+```bash
+export HERMES_HARNESS_RUN=1    # the guard acts in this repo, interactive sessions included
+export HERMES_ACCEPT_HOOKS=1   # each Hermes started here approves config hooks (all of them)
+```
+With `HERMES_ACCEPT_HOOKS=1` the first `hermes chat` there records the approval, and re-approves
+after the script changes. It accepts every hook in `~/.hermes/config.yaml`, not only this one.
 (Per-project Hermes settings are possible only through a separate Hermes home: a profile,
 `hermes -p <name>`, or `HERMES_HOME`. That duplicates config, memory and skills; not used here.)
 
@@ -129,7 +137,8 @@ hooks:
       command: /absolute/path/to/hermes-harness/lib/hooks/bd_notes_guard.py
       timeout: 10
 ```
-Then approve it once (unattended runs skip hooks that are not approved), and check it.
+Then approve it once (unattended runs skip hooks that are not approved; not needed where
+`.envrc.local` sets `HERMES_ACCEPT_HOOKS=1`), and check it.
 Hermes records approvals only when an agent command starts (`chat`, `cron tick`, ...), not
 on `hermes hooks ...`; `cron tick` is the cheap one (it also runs any due cron jobs):
 ```bash

@@ -204,7 +204,13 @@ if command -v uv >/dev/null 2>&1; then
   out=$(cd "$ROOT" && PYTHONPATH="$ROOT/lib" PYTHONDONTWRITEBYTECODE=1 uv run -q --no-project \
         --python 3.12 --with pytest python -m pytest -q -p no:cacheprovider tests/py 2>&1); rc=$?
   [ $rc -eq 0 ] && ok "pr_review unit tests: $(echo "$out" | tail -n 1)" || bad "pr_review unit tests" "$(echo "$out" | tail -n 20)"
+  # Lint + format with the repo's ruff.toml (pinned ruff, so results do not drift).
+  for lint in "check --output-format concise" "format --check"; do
+    # shellcheck disable=SC2086  # $lint is two words on purpose
+    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review tests/py 2>&1); rc=$?
+    [ $rc -eq 0 ] && ok "ruff ${lint%% *}: clean" || bad "ruff ${lint%% *}" "$(echo "$out" | tail -n 20)"
+  done
 else
-  echo "skip - pr_review unit tests (install uv to run them)"
+  echo "skip - pr_review unit tests and ruff (install uv to run them)"
 fi
 echo; echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

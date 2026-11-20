@@ -127,13 +127,20 @@ cat > "$tmp/bin/bd" <<'S'
 #!/bin/sh
 echo "bd $*" >> "$STUB_LOG"
 case "$1 $2" in "list --status=in_progress") echo "◐ ${STUB_PREFIX:-widgets}-abc P2 stuck" ;; esac
+# show <id> --json: $STUB_BEADS/<id>.json if present (empty output otherwise); STUB_BD_SHOW_FAIL=1 fails
+if [ "$1" = show ]; then
+  [ "${STUB_BD_SHOW_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
+  [ -n "$STUB_BEADS" ] && [ -f "$STUB_BEADS/$2.json" ] && cat "$STUB_BEADS/$2.json"
+fi
 exit 0
 S
 cat > "$tmp/bin/gh" <<'S'
 #!/bin/sh
-# offline gh: `pr list` prints $STUB_PR_URL (empty = no PR); everything else fails
+# offline gh: `pr list` prints $STUB_PR_URL (empty = no PR); `pr view` prints $STUB_PR_BODY
+# (unset = fails); everything else fails
 echo "gh $*" >> "$STUB_LOG"
 [ "$1 $2" = "pr list" ] && { [ -n "$STUB_PR_URL" ] && echo "$STUB_PR_URL"; exit 0; }
+[ "$1 $2" = "pr view" ] && [ -n "${STUB_PR_BODY+x}" ] && { printf '%s\n' "$STUB_PR_BODY"; exit 0; }
 exit 1
 S
 cat > "$tmp/bin/hermes" <<'S'
@@ -191,6 +198,8 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   . "$HERE/run_timestamps_tests.sh"
   # agent ended its turn early (no PR, no sentinel): classify AGENT_STOPPED, resume once
   . "$HERE/agent_stopped_tests.sh"
+  # after an OK_DONE run the bead must still carry the PR link (class NOTES_LOST)
+  . "$HERE/notes_check_tests.sh"
   # --clean: reset the sandbox workspace to origin/main, saving uncommitted work first
   . "$HERE/sandbox_clean_tests.sh"
   # no remote and no GITHUB_REPO -> clear error

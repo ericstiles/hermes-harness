@@ -5,7 +5,9 @@
 #   hermes_classify <logfile> [exit_code]   -> prints ONE class name
 #
 # Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN
-#          AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED UNKNOWN
+#          AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED NOTES_LOST UNKNOWN
+# NOTES_LOST is never inferred from Hermes output: hermes-run writes RUN_RESULT=NOTES_LOST
+# when an OK_DONE run's bead lost its PR link (lib/notes_check.sh), and step 1 reads it back.
 # Patterns are anchored to the formats seen in real logs so agent narration or
 # test output (e.g. "assert status == 404", "Request timed out" from the title
 # generator) cannot trigger a false match. bash 3.2 compatible; read-only.

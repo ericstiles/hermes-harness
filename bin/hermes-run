@@ -45,6 +45,8 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/runtime.sh"
 # shellcheck source=../lib/sandbox.sh
 . "$HARNESS_HOME/lib/sandbox.sh"
+# shellcheck source=../lib/notes_check.sh
+. "$HARNESS_HOME/lib/notes_check.sh"
 
 MAX=10; CLEAN=0
 for _a in "$@"; do
@@ -190,9 +192,24 @@ run_once() { # <timeout> [session-id-to-resume]
   runs=$((runs + 1))
 }
 
+# An OK_DONE run whose bead lost its PR link (in_progress + URL in notes) is NOTES_LOST:
+# hermes-review would refuse the PR and the queue would stall unnoticed. Read-only.
+notes_check() {
+  local claimed out rc
+  claimed=$(claimed_issue "$log")
+  [ -n "$claimed" ] || [ -z "$stopped_log" ] || claimed=$(claimed_issue "$stopped_log")
+  out=$(hh_notes_check "$log" "$claimed"); rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  [ "$rc" = 1 ] || return 0
+  class=NOTES_LOST
+  { printf '%s\n' "$out"; echo "RUN_RESULT=NOTES_LOST"; } >> "$log"
+  hh_stamp_line "RUN_RESULT=NOTES_LOST" >> "$timed" 2>/dev/null || true
+}
+
 final=OK_DONE
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
+  stopped_log=""
   run_once "$TIMEOUT"
   if [ "$class" = TIMEOUT ]; then
     unclaim_stale "$log"
@@ -225,9 +242,11 @@ for i in $(seq 1 "$MAX"); do
       echo "note: no session id in $log; cannot resume"
     fi
   fi
+  [ "$class" = OK_DONE ] && notes_check
   final=$class
   case "$class" in
     OK_DONE) continue ;;
+    NOTES_LOST) echo "The PR's bead lost its PR link (NOTES_CHECK lines above); hermes-review would refuse the PR — stopping. See $log"; break ;;
     QUEUE_EMPTY) echo "Queue empty."; final=QUEUE_EMPTY; break ;;
     BLOCKED) echo "Issue blocked — stopping. See $log"; break ;;
     MODEL_API_ERROR) echo "Agent made no progress (model/API error) — stopping. See $log"; break ;;

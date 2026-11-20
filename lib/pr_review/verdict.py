@@ -35,6 +35,9 @@ class Verdict:
     problems: tuple[Problem, ...]
     # Priority of the review-fix issue: "high" (P1) or "same" (the ticket's priority).
     fix_priority: str = "same"
+    # True: the PR does not rebase onto main. Not a code rejection: it never counts
+    # toward the two-strike escalation (see review._act).
+    rebase_conflict: bool = False
 
     def blocking(self) -> tuple[Problem, ...]:
         """In-scope problems: fixed on the PR's branch before it can merge."""

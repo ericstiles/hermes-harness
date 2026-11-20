@@ -130,8 +130,9 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
             )  # fmt: skip
             return verdict
     except RebaseConflict as exc:
+        log.info("%s: does not rebase onto origin/main", tag)
         problem = Problem("", None, "Does not rebase cleanly onto main", str(exc))
-        return Verdict(False, "Rebase onto origin/main failed.", (problem,))
+        return Verdict(False, "Rebase onto origin/main failed.", (problem,), rebase_conflict=True)
 
 
 def _open(rows: list[dict[str, object]]) -> list[str]:
@@ -157,16 +158,37 @@ def _merge(ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, fix_ids: 
 def _escalate(
     ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, fix_ids: list[str]
 ) -> str:
-    """Second rejection: stop the automatic loop and hand the ticket to a human."""
-    _say(ctx, pr, f"rejected again after {fix_ids}: block {bead} for a human")
+    """Second rejection (or too many conflicts): stop the loop and hand T to a human."""
+    conflict = verdict.rebase_conflict
+    why = (
+        f"still conflicts with main after {len(fix_ids)} rebase fixes"
+        if conflict
+        else "rejected twice"
+    )
+    _say(ctx, pr, f"{why} ({', '.join(fix_ids)}): block {bead} for a human")
     if not ctx.dry_run:
         ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=False)
         _file_debt(ctx, verdict, bead, pr)
-        ctx.beads.escalate(bead, fixes.escalation_note(pr, fix_ids))
+        ctx.beads.escalate(bead, fixes.escalation_note(pr, fix_ids, conflict=conflict))
         ctx.github.add_label(pr, fixes.PR_HUMAN_LABEL)
-        ctx.notify("hermes-review: needs you", f"PR #{pr.number} ({bead}) rejected twice")
+        ctx.notify("hermes-review: needs you", f"PR #{pr.number} ({bead}) {why}")
         ctx.beads.push()
     return "escalated"
+
+
+def _send_rebase(
+    ctx: Context, pr: PullRequest, bead: str, info: dict[str, object], verdict: Verdict
+) -> str:
+    """Mechanical conflict with main: a rebase-only fix issue, never a rejection strike."""
+    priority = int(info.get("priority", DEFAULT_PRIORITY))  # type: ignore[call-overload]
+    _say(ctx, pr, f"does not rebase onto main: rebase-fix P{priority} (not a rejection)")
+    if not ctx.dry_run:
+        ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=False)
+        detail = verdict.problems[0].detail if verdict.problems else ""
+        fix = ctx.beads.create(fixes.rebase_issue_args(bead, pr, detail, priority))
+        ctx.beads.note(bead, f"PR #{pr.number} conflicts with main; rebase-fix {fix}")
+        ctx.beads.push()
+    return "rebase-needed"
 
 
 def _send_back(
@@ -200,8 +222,14 @@ def _act(
     previous = ctx.beads.review_fixes(pr.number)
     if verdict.approve:
         return _merge(ctx, pr, bead, verdict, _open(previous))
-    if previous:
-        return _escalate(ctx, pr, bead, verdict, [str(r["id"]) for r in previous])
+    rebases = [str(r["id"]) for r in previous if fixes.is_rebase_fix(r)]
+    strikes = [str(r["id"]) for r in previous if not fixes.is_rebase_fix(r)]
+    if verdict.rebase_conflict:
+        if len(rebases) >= fixes.MAX_REBASE_FIXES:
+            return _escalate(ctx, pr, bead, verdict, rebases)
+        return _send_rebase(ctx, pr, bead, info, verdict)
+    if strikes:
+        return _escalate(ctx, pr, bead, verdict, strikes)
     return _send_back(ctx, pr, bead, info, verdict)
 
 
@@ -212,7 +240,8 @@ def _unfinished_fixes(ctx: Context, pr: PullRequest) -> list[str]:
 
 
 def review_pr(ctx: Context, pr: PullRequest) -> str:
-    """Review one PR; returns refused | skipped | waiting | escalated | merged | changes-needed."""
+    """Review one PR; returns refused | skipped | waiting | escalated | merged |
+    changes-needed | rebase-needed."""
     if ctx.github.has_marker(pr, f"<!-- {MARKER_PREFIX}{pr.head_sha} -->"):
         return "skipped"
     try:

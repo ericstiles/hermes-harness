@@ -54,3 +54,28 @@ def test_fix_title_matches_only_its_own_pr() -> None:
 def test_escalation_note_names_the_pr() -> None:
     assert "PR #7" in fixes.escalation_note(PR, ["om-f1"])
     assert "om-f1" in fixes.escalation_note(PR, ["om-f1"])
+
+
+def test_rebase_issue_asks_for_a_rebase_only_with_force_with_lease() -> None:
+    args = fixes.rebase_issue_args("om-1", PR, "CONFLICT (content): a.py", priority=2)
+    assert args[:2] == ["create", "Rebase PR #7 onto main (om-1)"]
+    labels = [args[i + 1] for i, a in enumerate(args) if a == "-l"]
+    assert labels == [f"{fixes.REVIEW_FIX_LABEL},{fixes.REBASE_LABEL}"]
+    assert _arg(args, "-p") == "2"
+    body = _arg(args, "-d")
+    for text in (URL, "git rebase origin/main", "git push --force-with-lease origin bd/om-1",
+                 "CONFLICT (content): a.py", "Do NOT open a new PR"):  # fmt: skip
+        assert text in body
+
+
+def test_rebase_issue_title_is_found_as_a_fix_for_its_pr() -> None:
+    assert fixes.is_fix_for("Rebase PR #7 onto main (om-1)", 7)
+    assert not fixes.is_fix_for("Rebase PR #70 onto main (om-1)", 7)
+    assert fixes.is_rebase_fix({"title": "Rebase PR #7 onto main (om-1)"})
+    assert not fixes.is_rebase_fix({"title": "Review fixes for PR #7 (om-1)"})
+    assert not fixes.is_rebase_fix({"id": "om-f1"})
+
+
+def test_conflict_escalation_note_says_it_is_a_conflict() -> None:
+    note = fixes.escalation_note(PR, ["om-r1", "om-r2", "om-r3"], conflict=True)
+    assert "rebase" in note and "om-r3" in note and "PR #7" in note

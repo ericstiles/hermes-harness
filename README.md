@@ -37,8 +37,12 @@ Runs on the host next to `hermes-run`. For each open, non-draft `bd/<id>` PR:
      priority is P1 when the reviewer says `fix_priority: high`, else T's own priority.
      Hermes picks F up next, pushes fixes to the same branch, and notes the PR on F; the
      reviewer waits for that note before re-reviewing.
-   - **Second rejection** → T is set `blocked` with the `human` label (`bd human list`),
-     the PR gets the `needs-human` label, and a macOS notification fires once.
+   - **Does not rebase onto main** → not a rejection: a comment plus a rebase-only issue
+     `Rebase PR #N onto main (T)` (labels `review-fix`, `rebase-conflict`; T's priority).
+     Hermes rebases `bd/T` and pushes with `--force-with-lease`. These issues never count
+     toward the second rejection; a conflict after 3 of them escalates as below.
+   - **Second rejection** (of the code) → T is set `blocked` with the `human` label
+     (`bd human list`), the PR gets the `needs-human` label, and a macOS notification fires once.
    - Problems the reviewer marks out of scope never block: each becomes a `tech-debt` issue.
 
 A hidden `<!-- pr-review:<sha> -->` marker makes it review each head commit once.

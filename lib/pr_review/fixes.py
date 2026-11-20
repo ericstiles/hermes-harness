@@ -18,16 +18,31 @@ if TYPE_CHECKING:  # services imports this module
 REVIEW_FIX_LABEL = "review-fix"
 HUMAN_LABEL = "human"  # `bd human list` shows issues with this label
 PR_HUMAN_LABEL = "needs-human"
+REBASE_LABEL = "rebase-conflict"
 HIGH_PRIORITY = 1
+# Rebase-only fixes allowed per PR before a further conflict goes to a human.
+MAX_REBASE_FIXES = 3
 _SESSION = re.compile(r"^Hermes-Session:\s*(\S+)\s*$", re.MULTILINE)
+_REBASE_TITLE = "Rebase PR #{n} onto main ({bead})"
 
 
 def fix_title(bead: str, pr_number: int) -> str:
     return f"Review fixes for PR #{pr_number} ({bead})"
 
 
+def rebase_title(bead: str, pr_number: int) -> str:
+    return _REBASE_TITLE.format(n=pr_number, bead=bead)
+
+
 def is_fix_for(title: str, pr_number: int) -> bool:
-    return re.fullmatch(rf"Review fixes for PR #{pr_number} \(.+\)", title) is not None
+    """A review-fix or rebase-fix issue filed for PR #pr_number."""
+    pattern = rf"(Review fixes for PR #{pr_number}|Rebase PR #{pr_number} onto main) \(.+\)"
+    return re.fullmatch(pattern, title) is not None
+
+
+def is_rebase_fix(row: dict[str, object]) -> bool:
+    """A rebase-only fix (mechanical conflict), which is not a rejection strike."""
+    return str(row.get("title", "")).startswith("Rebase PR #")
 
 
 def session_id(body: str) -> str | None:
@@ -88,9 +103,47 @@ def fix_issue_args(
     ]  # fmt: skip
 
 
-def escalation_note(pr: PullRequest, fix_ids: list[str]) -> str:
+def rebase_issue_args(bead: str, pr: PullRequest, detail: str, priority: int) -> list[str]:
+    """`bd` arguments for a rebase-only fix: the PR's branch conflicts with main."""
+    branch = pr.branch
+    acceptance = (
+        f"{branch} is rebased onto the current origin/main with no conflict markers; the "
+        f"repo's quality gate passes; PR #{pr.number} has no other changes."
+    )
+    body = (
+        f"## Problem\nPR #{pr.number} ({pr.url}) for {bead} no longer rebases cleanly onto "
+        "origin/main. This is a mechanical conflict, not a code review rejection.\n\n"
+        f"```\n{detail.strip()[:2000]}\n```\n\n"
+        f"## Where\n- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing)\n"
+        f"- Original ticket: {bead}\n\n"
+        "## Fix scope\nOnly resolve the conflicts, keeping the intent of both sides. Do NOT "
+        f"change anything else, the PR title or its `Bead: {bead}` line.\n\n"
+        f"## How\n1. `git fetch origin && git checkout -B {branch} origin/{branch}`\n"
+        "2. `git rebase origin/main`; resolve each conflict, `git add`, `git rebase --continue`.\n"
+        "3. Run the tests and lint.\n"
+        f"4. `git push --force-with-lease origin {branch}` (the only case where a force-push "
+        "is allowed, and only to this branch). Do NOT open a new PR.\n"
+        f'5. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close this '
+        f"issue or {bead}: the reviewer closes both when it merges.\n\n"
+        f"## Acceptance\n{acceptance}\n\n"
+        f"## Dependencies\ndiscovered-from: {bead}\n"
+    )
+    return [
+        "create", rebase_title(bead, pr.number),
+        "-t", "bug", "-p", str(priority), "-l", f"{REVIEW_FIX_LABEL},{REBASE_LABEL}",
+        "--deps", f"discovered-from:{bead}",
+        "-d", body, "--acceptance", acceptance, "--silent",
+    ]  # fmt: skip
+
+
+def escalation_note(pr: PullRequest, fix_ids: list[str], conflict: bool = False) -> str:
+    what = (
+        f"PR #{pr.number} still does not rebase onto main after rebase fixes"
+        if conflict
+        else f"Reviewer rejected PR #{pr.number} again after review-fix"
+    )
     return (
-        f"Reviewer rejected PR #{pr.number} again after review-fix {', '.join(fix_ids)}. "
+        f"{what} {', '.join(fix_ids)}. "
         f"Blocked for a human: read {pr.url}, then fix it yourself, or unblock this issue "
         "and file a clearer review-fix issue, or close the PR."
     )

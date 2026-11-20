@@ -49,6 +49,10 @@ overrides the global "do not commit or push" default for this workflow only.
         │               problems outside the PR's scope → separate tech-debt issues
         │               → next hermes-run picks F
         │
+        ├── does not rebase onto main ──► rebase-fix issue F (labels review-fix +
+        │                                 rebase-conflict); NOT a rejection strike
+        │                                 (after 3 rebase fixes → human, as below)
+        │
         └── 2nd reject of the same T ──► T blocked + label human (`bd human list`),
                                          PR labelled needs-human → the owner decides
 ```
@@ -93,6 +97,13 @@ overrides the global "do not commit or push" default for this workflow only.
      line.
   6. A point you cannot fix in this PR's scope: file it as a new issue (rules
      below) and say so in a PR comment (`gh pr comment <N>`).
+  - **Rebase fixes** (labels `review-fix` and `rebase-conflict`, title
+    `Rebase PR #N onto main (T)`): the PR only conflicts with main. After step 1,
+    run `git rebase origin/main`, resolve each conflict keeping the intent of
+    both sides, then run tests and lint. Push with
+    `git push --force-with-lease origin bd/<T>`: the ONLY case where a
+    force-push is allowed, and only to that branch. Change nothing else. Then
+    step 5.
 - You ARE allowed and expected to create new beads issues. Do not ask first.
   File one with `bd create "<title>" -t bug|task -p <0-4> --deps discovered-from:<id> -d "<self-contained description>" --acceptance "<checks a test can assert>" --silent`
   whenever you:

@@ -216,3 +216,81 @@ def test_refusal_is_posted_once_but_rechecked_until_fixed(
     bd.info["notes"] = f"PR: {URL}"  # Hermes adds the PR link; same head commit
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
     assert ("merge", 7) in gh.calls
+
+
+CONFLICT = Verdict(
+    False, "Rebase onto origin/main failed.",
+    (Problem("", None, "Does not rebase cleanly onto main", "CONFLICT a.py"),),
+    rebase_conflict=True,
+)  # fmt: skip
+
+
+def _rebase_fix(n: int) -> dict[str, object]:
+    return {"id": f"om-r{n}", "status": "closed", "title": "Rebase PR #7 onto main (om-1)",
+            "notes": f"PR: {URL}"}  # fmt: skip
+
+
+def test_conflict_after_a_code_rejection_is_not_a_second_strike(
+    verdict: list[Verdict],
+) -> None:
+    verdict[0] = CONFLICT
+    fixes = [{"id": "om-f1", "status": "closed", "title": "Review fixes for PR #7 (om-1)",
+              "notes": f"PR: {URL}"}]  # fmt: skip
+    gh, bd = FakeGitHub(), FakeBeads(fixes=fixes)
+    ctx = _ctx(gh, bd)
+    assert review.review_pr(ctx, PR) == "rebase-needed"
+    assert gh.calls == [("review", False)]
+    assert bd.calls[0] == ("create", "Rebase PR #7 onto main (om-1)")
+    assert [c[0] for c in bd.calls[1:]] == ["note", "push"]
+    assert ctx.notified == []  # type: ignore[attr-defined]
+
+
+def test_code_rejection_after_a_rebase_fix_is_still_the_first_strike(
+    verdict: list[Verdict],
+) -> None:
+    verdict[0] = Verdict(False, "no", (INSIDE,))
+    gh, bd = FakeGitHub(), FakeBeads(fixes=[_rebase_fix(1)])
+    assert review.review_pr(_ctx(gh, bd), PR) == "changes-needed"
+    assert bd.calls[0] == ("create", "Review fixes for PR #7 (om-1)")
+
+
+def test_second_code_rejection_still_escalates_despite_rebase_fixes(
+    verdict: list[Verdict],
+) -> None:
+    verdict[0] = Verdict(False, "no", (INSIDE,))
+    code = {"id": "om-f1", "status": "closed", "title": "Review fixes for PR #7 (om-1)",
+            "notes": f"PR: {URL}"}  # fmt: skip
+    gh, bd = FakeGitHub(), FakeBeads(fixes=[_rebase_fix(1), code])
+    assert review.review_pr(_ctx(gh, bd), PR) == "escalated"
+    assert bd.calls == [("escalate", "om-1"), ("push", None)]
+
+
+def test_repeated_conflicts_escalate_as_a_conflict(verdict: list[Verdict]) -> None:
+    verdict[0] = CONFLICT
+    rebases = [_rebase_fix(n) for n in range(1, review.fixes.MAX_REBASE_FIXES + 1)]
+    gh, bd = FakeGitHub(), FakeBeads(fixes=rebases)
+    ctx = _ctx(gh, bd)
+    assert review.review_pr(ctx, PR) == "escalated"
+    assert bd.calls == [("escalate", "om-1"), ("push", None)]
+    assert "conflict" in ctx.notified[0]  # type: ignore[attr-defined]
+
+
+def test_merge_also_closes_open_rebase_fixes(verdict: list[Verdict]) -> None:
+    fix = {**_rebase_fix(1), "status": "in_progress"}
+    gh, bd = FakeGitHub(), FakeBeads(fixes=[fix])
+    assert review.review_pr(_ctx(gh, bd), PR) == "merged"
+    assert bd.calls == [("close", "om-1"), ("close", "om-r1"), ("push", None)]
+
+
+def test_verdict_turns_a_rebase_failure_into_a_conflict_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def conflict(*args: object, **kwargs: object) -> object:
+        raise review.RebaseConflict("CONFLICT (content): a.py")
+
+    ctx = _ctx(FakeGitHub(), FakeBeads())
+    monkeypatch.setattr(ctx, "baseline", dict)
+    monkeypatch.setattr(review, "checkout", conflict)
+    result = review._verdict(ctx, PR, "om-1", "ref")
+    assert result.rebase_conflict and not result.approve
+    assert "CONFLICT (content): a.py" in result.problems[0].detail

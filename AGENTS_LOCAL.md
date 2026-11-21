@@ -6,9 +6,12 @@ holds the rules that only apply here. Where the two conflict, this file wins.
 
 ## Shared AGENTS.md
 
-- Edit `AGENTS.md` here, then copy it unchanged to each target repository
-  (e.g. `cp AGENTS.md ../../organize_music/AGENTS.md`) in the same change, so
-  the copies never drift. Never put repository-specific rules in it.
+- Edit `AGENTS.md` here, then run `bin/hermes-setup <target-repo>` for each
+  target repository (e.g. `bin/hermes-setup ../../organize_music`) and commit
+  the result there, so the copies never drift. `bin/hermes-setup --check` shows
+  drift without writing. Never put repository-specific rules in `AGENTS.md`.
+- Files every target repository gets are listed in `bin/hermes-setup`; it never
+  modifies an existing `AGENTS_LOCAL.md`.
 - A target repository's own rules (quality gate, stack, environment variables,
   verified library facts) go in that repository's `AGENTS_LOCAL.md`.
 

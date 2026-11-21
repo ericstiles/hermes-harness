@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# hermes-setup — copy the harness's baseline files into a target repo, or check them.
+#
+# Usage: hermes-setup [--check] <target-repo>
+#   --check   write nothing; print what would change and exit 1 if anything would.
+#
+# Files (paths relative to the target repo's top level):
+#   AGENTS.md        managed: always an identical copy of this harness's AGENTS.md.
+#   AGENTS_LOCAL.md  seeded: created from templates/AGENTS_LOCAL.md only when missing.
+#                    An existing one is never modified or deleted (the repo's own rules).
+#   CLAUDE.md        managed block between the HERMES-HARNESS markers: an @AGENTS_LOCAL.md
+#                    import plus templates/CLAUDE_SNIPPET.md. Text outside it is kept.
+#   .gitignore       the lines logs/ and .envrc.local are added when missing.
+#
+# Deterministic and idempotent: the result depends only on the harness files and the
+# repo's current files, and a second run changes nothing. Never commits, pushes or
+# deletes. Exit: 0 done / in sync, 1 drift (--check only), 2 usage or refused target.
+set -uo pipefail
+_s=${BASH_SOURCE[0]}
+while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s"); case $_s in /*) ;; *) _s="$_d/$_s" ;; esac; done
+HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd -P)
+
+BEGIN_MARK="<!-- BEGIN HERMES-HARNESS (managed by hermes-setup; edits inside are overwritten) -->"
+END_MARK="<!-- END HERMES-HARNESS -->"
+IGNORE_LINES=("logs/" ".envrc.local")
+
+usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+die() { echo "hermes-setup: $*" >&2; exit 2; }
+
+CHECK=0; TARGET=""
+for arg in "$@"; do
+  case $arg in
+    -h|--help) usage; exit 0 ;;
+    --check) CHECK=1 ;;
+    -*) die "unknown option $arg (usage: hermes-setup [--check] <target-repo>)" ;;
+    *) [ -z "$TARGET" ] || die "one target only (usage: hermes-setup [--check] <target-repo>)"; TARGET=$arg ;;
+  esac
+done
+[ -n "$TARGET" ] || die "usage: hermes-setup [--check] <target-repo>"
+[ -d "$TARGET" ] || die "$TARGET: no such directory"
+TOP=$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null) || die "$TARGET: not a git repository"
+TOP=$(cd "$TOP" && pwd -P)
+common() { (cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd -P); }
+if [ "$TOP" = "$HARNESS_HOME" ] || [ "$(common "$TOP")" = "$(common "$HARNESS_HOME" 2>/dev/null)" ]; then
+  die "$TOP is the harness itself (or one of its worktrees); its AGENTS.md is the source"
+fi
+for src in AGENTS.md templates/AGENTS_LOCAL.md templates/CLAUDE_SNIPPET.md; do
+  [ -f "$HARNESS_HOME/$src" ] || die "harness file missing: $HARNESS_HOME/$src"
+done
+
+WORK=$(mktemp -d) || die "mktemp failed"
+trap 'rm -rf "$WORK"' EXIT
+DRIFT=0
+
+# report <action> <file>: one aligned line per file.
+report() { printf '%-13s %s\n' "$1" "$2"; }
+
+# apply <file> <desired-content-path>: create/update the file when it differs.
+apply() {
+  local name=$1 want=$2 dest="$TOP/$1" action
+  if [ ! -e "$dest" ]; then action=create
+  elif cmp -s "$want" "$dest"; then report unchanged "$name"; return 0
+  else action=update; fi
+  if [ "$CHECK" -eq 1 ]; then DRIFT=1; report "would $action" "$name"; return 0; fi
+  mkdir -p "$(dirname "$dest")" && cp "$want" "$dest.hermes-setup.tmp" && mv "$dest.hermes-setup.tmp" "$dest" \
+    || die "could not write $dest"
+  report "${action}d" "$name"
+}
+
+# claude_block: the managed CLAUDE.md block (snippet without its "Paste into" comments).
+claude_block() {
+  echo "$BEGIN_MARK"
+  echo "Project-specific agent rules and verified facts: @AGENTS_LOCAL.md"
+  echo
+  grep -v '^<!--.*-->$' "$HARNESS_HOME/templates/CLAUDE_SNIPPET.md"
+  echo "$END_MARK"
+}
+
+# claude_md <out>: current CLAUDE.md with the block replaced in place, else appended.
+claude_md() {
+  local out=$1 cur="$TOP/CLAUDE.md" block="$WORK/block"
+  claude_block > "$block"
+  if [ ! -f "$cur" ]; then cp "$block" "$out"; return; fi
+  if grep -qxF "$BEGIN_MARK" "$cur"; then
+    awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v f="$block" '
+      $0 == b { while ((getline l < f) > 0) print l; skip = 1; next }
+      skip && $0 == e { skip = 0; next }
+      !skip { print }' "$cur" > "$out"
+  else
+    { cat "$cur"; [ -z "$(tail -c 1 "$cur")" ] || echo; echo; cat "$block"; } > "$out"
+  fi
+}
+
+# gitignore <out>: current .gitignore plus any missing required line.
+gitignore() {
+  local out=$1 cur="$TOP/.gitignore" line missing=()
+  for line in "${IGNORE_LINES[@]}"; do
+    [ -f "$cur" ] && grep -qxF "$line" "$cur" || missing+=("$line")
+  done
+  if [ -f "$cur" ]; then cp "$cur" "$out"; else : > "$out"; fi
+  [ ${#missing[@]} -eq 0 ] && return
+  { [ ! -s "$out" ] || [ -z "$(tail -c 1 "$out")" ] || echo
+    echo "# hermes-harness (run logs, lock files; per-machine secrets)"
+    printf '%s\n' "${missing[@]}"; } >> "$out"
+}
+
+echo "hermes-setup: $TOP$([ "$CHECK" -eq 1 ] && echo ' (check only)')"
+apply AGENTS.md "$HARNESS_HOME/AGENTS.md"
+if [ -e "$TOP/AGENTS_LOCAL.md" ]; then report kept AGENTS_LOCAL.md
+else apply AGENTS_LOCAL.md "$HARNESS_HOME/templates/AGENTS_LOCAL.md"; fi
+claude_md "$WORK/CLAUDE.md" && apply CLAUDE.md "$WORK/CLAUDE.md"
+gitignore "$WORK/gitignore" && apply .gitignore "$WORK/gitignore"
+[ "$CHECK" -eq 1 ] && [ "$DRIFT" -eq 1 ] && exit 1
+exit 0

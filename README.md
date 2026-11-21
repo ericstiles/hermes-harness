@@ -7,6 +7,7 @@ on the **current directory's git repo** (or `HERMES_REPO`), never on their own f
 | Command | What it does |
 |---|---|
 | `hermes-run [N]` | Work up to N beads issues, one Hermes run each; classify every run; release stale claims after a timeout |
+| `hermes-setup` | Copy the baseline files (shared `AGENTS.md`, `AGENTS_LOCAL.md` stub, `CLAUDE.md` block, `.gitignore` lines) into a target repo; `--check` reports drift. Never touches an existing `AGENTS_LOCAL.md` |
 | `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active or `GH_TOKEN` is unset |
 | `hermes-status [--tests]` | Read-only snapshot: origin/main, PRs, beads, active run, newest log |
 | `hermes-supervise [log]` | Read-only diagnosis: `CLASS=`, `ACTION=`, `NEXT=` |
@@ -87,17 +88,23 @@ Symlinks onto PATH also work. Check with `which hermes-launch`.
 
 ## Per target repo
 1. `.beads/` with a Dolt remote (`bd init`), so the sandbox can pull and push issues.
-2. `AGENTS.md`: copy this repo's `AGENTS.md` unchanged (it is shared and identical
-   in every target repo). Put the repo's own rules (quality gate, stack,
-   environment variables) in a new `AGENTS_LOCAL.md`, which `AGENTS.md` tells agents to read.
+2. Baseline files: `hermes-setup <target-repo>`. Re-run it after every harness update;
+   `hermes-setup --check <target-repo>` changes nothing and exits 1 if the repo has drifted.
+   It never commits, pushes or deletes; review and commit the result in the target repo.
+
+   | File | What `hermes-setup` does |
+   |------|--------------------------|
+   | `AGENTS.md` | always an identical copy of this repo's `AGENTS.md` (shared workflow) |
+   | `AGENTS_LOCAL.md` | created from `templates/AGENTS_LOCAL.md` only if missing; an existing one is never touched. Fill in the quality gate, stack and repo rules here |
+   | `CLAUDE.md` | a managed block between `HERMES-HARNESS` markers: `@AGENTS_LOCAL.md` plus `templates/CLAUDE_SNIPPET.md`; your text outside it is kept |
+   | `.gitignore` | adds `logs/` (run logs, lock and relaunch counters) and `.envrc.local` if missing |
 3. `.envrc.local` (git-ignored): `export GH_TOKEN=...` (fine-grained, that repo only); `direnv allow`.
-4. Git-ignore `logs/` (run logs, lock and relaunch counters live there).
-5. Optional: paste `templates/CLAUDE_SNIPPET.md` into `CLAUDE.md`, and allow
-   `Bash(hermes-status:*)`, `Bash(hermes-supervise:*)`, `Bash(hermes-launch:*)` in
-   `~/.claude/settings.json`.
-6. Sandbox image with that project's language tools (Hermes `terminal.docker_image`).
+4. Optional: allow `Bash(hermes-status:*)`, `Bash(hermes-supervise:*)`, `Bash(hermes-launch:*)`
+   in `~/.claude/settings.json`.
+5. Sandbox image with that project's language tools (Hermes `terminal.docker_image`).
 
 ```bash
+hermes-setup /path/to/target-repo
 cd /path/to/target-repo
 hermes-launch --dry-run && hermes-launch
 ```

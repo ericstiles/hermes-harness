@@ -112,7 +112,7 @@ hermes-launch --dry-run && hermes-launch
 ## Env
 `GITHUB_REPO` (default: parsed from `origin`), `RUN_TIMEOUT` (90m), `HERMES_EXTEND` (20m, 0 = hard limit), `HERMES_EXTEND_CAP` (180m),
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_WRAPUP_TIMEOUT` (15m, 0 disables), `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
-`HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_TEST_CMD` (for `hermes-status --tests`),
+`HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_STALL_WARN` (10m; 0 = off), `HERMES_TEST_CMD` (for `hermes-status --tests`),
 `REVIEWER_GH_TOKEN`, `REVIEWER_AGENT`, `REVIEWER_MODEL`, `OLLAMA_HOST_URL`,
 `HERMES_REVIEW_PYTHON` (for `hermes-review`).
 
@@ -174,7 +174,7 @@ workspaces and ignored files such as `.venv` are left alone.
 ## Run logs
 Each run writes two files in `logs/`:
 - `run-<stamp>.log`: the raw Hermes output plus a final `RUN_RESULT=` line. The classifier, `hermes-status` and `hermes-supervise` read only this file.
-- `run-<stamp>.timed.txt`: the same output with `[HH:MM:SS]` on every line, a `(+38s)` line after any silence of `HERMES_TS_MIN_GAP` seconds or more (time since the previous output), and the run's `RUN_TIME`. The terminal shows this version. It is deliberately not a `*.log`, so nothing mistakes it for a run log.
+- `run-<stamp>.timed.txt`: the same output with `[HH:MM:SS]` on every line, a `(+38s)` line after any silence of `HERMES_TS_MIN_GAP` seconds or more (time since the previous output), a `no output for 10m (last: HH:MM:SS)` line after each `HERMES_STALL_WARN` of silence, and the run's `RUN_TIME`. The terminal shows this version. It is deliberately not a `*.log`, so nothing mistakes it for a run log.
 
 After each run `hermes-run` prints `RUN_TIME start= end= elapsed= issue=`; at the end, `RUN_TIME total= ... runs=N` before `FINAL_RESULT=`.
 

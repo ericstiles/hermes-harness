@@ -98,6 +98,9 @@ case "$class" in
     if [ "$relaunches" -ge "$MAX_RELAUNCH" ]; then why="Hermes crashed (${exc:-see the traceback}) and the relaunch limit ($MAX_RELAUNCH/day) is reached for $issue"
     else action=AUTO_RELAUNCH; next="hermes-launch --reason AGENT_CRASHED --issue ${issue:-unknown}"
          why="Hermes crashed: ${exc:-see the traceback}; relaunch (the next run continues from the issue's WIP: note)"; fi ;;
+  TURN_LIMIT)
+    stop=$(tr -d '\r' < "$work_log" | sed -n 's/^STOP_REASON: //p' | tail -n 1)
+    why="issue ${issue:-unknown} used the session's whole tool-call budget (${stop:-Reached maximum iterations}) without a PR, so a relaunch would hit it again: read its WIP: note (bd show ${issue:-<id>}), split it (bd create ... --deps discovered-from:${issue:-<id>}), bd update ${issue:-<id>} --status blocked, then relaunch" ;;
   AUTH_ERROR) why="credentials problem (GH_TOKEN scope/expiry); needs the human" ;;
   BLOCKED)    why="Hermes marked the issue blocked and stopped; read its notes (bd show) and decide" ;;
   AGENT_STOPPED)

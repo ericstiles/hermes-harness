@@ -5,12 +5,25 @@
 #   hermes_classify <logfile> [exit_code]   -> prints ONE class name
 #
 # Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN
-#          AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED AGENT_CRASHED NOTES_LOST UNKNOWN
+#          AUTH_ERROR BEADS_SYNC_ERROR TURN_LIMIT AGENT_STOPPED AGENT_CRASHED NOTES_LOST UNKNOWN
+# TURN_LIMIT: the session used its whole tool-call budget without a PR or sentinel: Hermes'
+# "Reached maximum iterations" banner, or the `STOP_REASON:` line hermes-run copies from
+# agent.log (lib/stop_reason.sh) says max_iterations_reached / budget_exhausted / api_calls n/n.
 # NOTES_LOST is never inferred from Hermes output: hermes-run writes RUN_RESULT=NOTES_LOST
 # when an OK_DONE run's bead lost its PR link (lib/notes_check.sh), and step 1 reads it back.
 # Patterns are anchored to the formats seen in real logs so agent narration or
 # test output (e.g. "assert status == 404", "Request timed out" from the title
 # generator) cannot trigger a false match. bash 3.2 compatible; read-only.
+
+_hc_turn_limit() { # <logfile> -> true when the session ran out of its tool-call budget
+  local stop n max
+  grep -q 'Reached maximum iterations' "$1" && return 0
+  stop=$(tr -d '\r' < "$1" | sed -n 's/^STOP_REASON: //p' | tail -n 1)
+  case "$stop" in max_iterations_reached*|budget_exhausted*) return 0 ;; esac
+  n=$(printf '%s\n' "$stop" | sed -n 's/.*api_calls=\([0-9]*\)\/[0-9]*.*/\1/p')
+  max=$(printf '%s\n' "$stop" | sed -n 's/.*api_calls=[0-9]*\/\([0-9]*\).*/\1/p')
+  [ -n "$n" ] && [ -n "$max" ] && [ "$max" -gt 0 ] && [ "$n" -ge "$max" ]
+}
 
 _hc_tool_calls() { # last "(N user, M tool calls)" -> M, empty if no footer
   sed -n 's/.*([0-9]* user, \([0-9]*\) tool calls).*/\1/p' "$1" | tail -n 1
@@ -63,6 +76,8 @@ hermes_classify() {
   if printf '%s\n' "$tail60" | grep -qE 'Bad credentials|could not read Username|[Aa]uthentication failed|HTTP 40[13]\b|\((401|403)\)'; then
     echo AUTH_ERROR; return 0
   fi
+  # It used its whole tool-call budget: more time or a "continue" will not help.
+  if _hc_turn_limit "$f"; then echo TURN_LIMIT; return 0; fi
   # The session ended cleanly (footer, exit 0) yet produced no PR, no sentinel and
   # no known error: the agent ended its turn mid-issue, e.g. by asking a question
   # nobody will answer (2026-11-19 incident). hermes-run resumes such a session once.

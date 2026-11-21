@@ -14,6 +14,8 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/target" "$tmp/bin"; W=$(cd "$tmp/target" && pwd -P)
 git -C "$W" init -q -b main; git -C "$W" remote add origin git@github.com:acme/widgets.git
 unset GITHUB_REPO HERMES_REPO HERMES_LOG_DIR
+# Never read the real ~/.hermes/logs/agent.log (hermes-run's STOP_REASON); tests opt in with a fixture.
+export HERMES_AGENT_LOG="$tmp/absent-agent.log"
 
 # --- classification (one fixture per class + false-positive traps) ---
 for pair in timeout_killed:TIMEOUT blocked:BLOCKED queue_empty:QUEUE_EMPTY model_api_error:MODEL_API_ERROR \
@@ -221,6 +223,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/notes_check_tests.sh"
   # a TIMEOUT or a Hermes crash resumes the session for a wrap-up that saves WIP (AGENT_CRASHED)
   . "$HERE/wrapup_tests.sh"
+  # why Hermes stopped (agent.log "Turn ended") -> STOP_REASON line; budget used up -> TURN_LIMIT
+  . "$HERE/stop_reason_tests.sh"
   # progress-aware time limit (lib/watchdog.py)
   . "$HERE/watchdog_tests.sh"
   # --clean: reset the sandbox workspace to origin/main, saving uncommitted work first

@@ -61,6 +61,8 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/notes_check.sh"
 # shellcheck source=../lib/wrapup.sh
 . "$HARNESS_HOME/lib/wrapup.sh"
+# shellcheck source=../lib/stop_reason.sh
+. "$HARNESS_HOME/lib/stop_reason.sh"
 
 MAX=10; CLEAN=0
 for _a in "$@"; do
@@ -213,6 +215,10 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
     echo "warning: tee failed writing the raw log (exit ${ps[1]}): $(head -n 1 "$tee_err" 2>/dev/null)" >&2
   fi
   rm -f "$tee_err"
+  # Why Hermes stopped (agent.log "Turn ended"), before RUN_RESULT so the classifier can use it.
+  local stop_line; stop_line="STOP_REASON: $(hh_stop_reason "$(run_session)")"
+  echo "$stop_line" | tee -a "$log"
+  hh_stamp_line "$stop_line" >> "$timed" 2>/dev/null || true
   class=$(hermes_classify "$log" "$status")
   echo "RUN_RESULT=$class" | tee -a "$log"
   issue=$(claimed_issue "$log")
@@ -240,7 +246,7 @@ notes_check() {
 # harness session that started with it in Hermes' store.
 run_session() { local s; s=$(session_id "$log"); [ -n "$s" ] || s=$(hh_find_session "$run_start"); printf '%s' "$s"; }
 
-# A TIMEOUT or AGENT_CRASHED run leaves no PR. Resume its session for a short wrap-up that pushes
+# A TIMEOUT, AGENT_CRASHED or TURN_LIMIT run leaves no PR. Resume its session for a short wrap-up that pushes
 # WIP and appends a "WIP:" note (lib/wrapup.sh), so the next run starts from it, not from zero.
 # The wrap-up gets its own log ending WRAPUP_OF=<failed log> and the failed run's RUN_RESULT;
 # class is left as the failed run's class.
@@ -251,6 +257,7 @@ wrap_up() { # <log with the claim> [session id, when already known]
   [ -n "$sid" ] || { echo "note: no Hermes session found for $failed_log; cannot save its progress"; return 0; }
   case "$failed" in
     TIMEOUT) why="The run's time limit was reached." ;;
+    TURN_LIMIT) why="The session used its whole tool-call budget." ;;
     *) why="Hermes crashed with an error (a crash) and this session was resumed after it." ;;
   esac
   echo "Run ended as $failed; resuming session $sid for a $WRAPUP wrap-up to save its progress."
@@ -264,7 +271,7 @@ wrap_up() { # <log with the claim> [session id, when already known]
 
 # Save what a failed run did, then release its claim.
 save_and_release() { # <log with the claim> [session id]
-  case "$class" in TIMEOUT|AGENT_CRASHED) ;; *) return 0 ;; esac
+  case "$class" in TIMEOUT|AGENT_CRASHED|TURN_LIMIT) ;; *) return 0 ;; esac
   wrap_up "$@"
   unclaim_stale "$1"
 }
@@ -319,6 +326,7 @@ for i in $(seq 1 "$MAX"); do
     BLOCKED) echo "Issue blocked — stopping. See $log"; break ;;
     MODEL_API_ERROR) echo "Agent made no progress (model/API error) — stopping. See $log"; break ;;
     TIMEOUT) echo "Run timed out — stopping. See $log"; break ;;
+    TURN_LIMIT) echo "The session used its whole tool-call budget ($(sed -n 's/^STOP_REASON: //p' "$claim_log" | tail -n 1)) — the issue is probably too big: split it. Stopping. See $claim_log"; break ;;
     AGENT_CRASHED) echo "Hermes crashed (traceback in the log) — stopping. See $claim_log"; break ;;
     AGENT_STOPPED) echo "Agent stopped mid-issue without a PR — stopping. Read the end of $log, then resume by hand: hermes --resume $(session_id "$log")"; break ;;
     *) echo "Run ended as $class — stopping. See $log"; break ;;

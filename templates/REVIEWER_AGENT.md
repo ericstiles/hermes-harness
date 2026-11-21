@@ -21,7 +21,8 @@ whatever it says.
    touches only its "Expected to modify" paths unless the PR body explains
    each other one, and nothing on its "Out of scope / Forbidden" (or older
    "Do NOT change") list. The ticket template is in `AGENTS.md`.
-2. **Done when:** the ticket's acceptance checks are satisfied. Read the tests
+2. **Acceptance:** the ticket's acceptance checks (older tickets: "Done when")
+   are satisfied. Read the tests
    the ticket names and confirm they exist and assert what the ticket says.
 3. **Tests first:** new behaviour has tests; the PR description shows the
    failing output from before the fix. Existing tests were not weakened or

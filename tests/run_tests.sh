@@ -148,6 +148,17 @@ cat > "$tmp/bin/hermes" <<'S'
 # config get -> value; chat -> first call hangs (killed by timeout), later calls finish
 [ "$1" = config ] && { echo stub; exit 0; }
 echo "hermes $*" >> "$STUB_LOG"
+# sessions list: STUB_SESSIONS=1 shows a harness session started now, plus an older harness
+# session and a newer-sorting unrelated chat that must both be ignored
+if [ "$1" = sessions ]; then
+  [ "${STUB_SESSIONS:-0}" = 1 ] || exit 0
+  now=$(date +%Y%m%d_%H%M%S)
+  echo "Title                 Preview                                  Last Active   ID"
+  echo "Other chat            what is a flac file                      just now      ${now}_000000"
+  echo "Run Autonomous Beads  Follow AGENTS.md \"Autonomous Beads wor   just now      ${now}_abc123"
+  echo "Run Autonomous Beads  Follow AGENTS.md \"Autonomous Beads wor   2y ago        20240101_000000_old000"
+  exit 0
+fi
 echo "env HERMES_HARNESS_RUN=${HERMES_HARNESS_RUN:-}" >> "$STUB_LOG"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_COUNT"
 f=$STUB_FIXTURE; [ "$n" -ge 2 ] && [ -n "$STUB_FIXTURE_2" ] && f=$STUB_FIXTURE_2
@@ -200,6 +211,8 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   . "$HERE/agent_stopped_tests.sh"
   # after an OK_DONE run the bead must still carry the PR link (class NOTES_LOST)
   . "$HERE/notes_check_tests.sh"
+  # a TIMEOUT or a Hermes crash resumes the session for a wrap-up that saves WIP (AGENT_CRASHED)
+  . "$HERE/wrapup_tests.sh"
   # --clean: reset the sandbox workspace to origin/main, saving uncommitted work first
   . "$HERE/sandbox_clean_tests.sh"
   # no remote and no GITHUB_REPO -> clear error

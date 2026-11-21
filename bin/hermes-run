@@ -13,9 +13,13 @@
 # Env (all optional):
 #   RUN_TIMEOUT=90m              per-run kill timeout (local 27B model needs > 45m)
 #   HERMES_RETRY_ON_TIMEOUT=0|1  on a timeout, retry the same issue once with a
-#                                larger timeout (2x, capped at HERMES_TIMEOUT_CAP=120m)
-#   HERMES_UNCLAIM_ON_TIMEOUT=1  after a timeout, release the stuck claim so
-#                                `bd ready` lists the issue again
+#                                larger timeout (2x, capped at HERMES_TIMEOUT_CAP=120m),
+#                                resuming the killed session when it can be found
+#   HERMES_WRAPUP_TIMEOUT=15m    after a TIMEOUT or a Hermes crash (AGENT_CRASHED), resume the
+#                                session this long to push WIP to bd/<id> and append a
+#                                "WIP:" note to the issue; 0 disables (lib/wrapup.sh)
+#   HERMES_UNCLAIM_ON_TIMEOUT=1  after a timeout or crash (and its wrap-up), release the
+#                                stuck claim so `bd ready` lists the issue again
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
 #   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
@@ -47,6 +51,8 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/sandbox.sh"
 # shellcheck source=../lib/notes_check.sh
 . "$HARNESS_HOME/lib/notes_check.sh"
+# shellcheck source=../lib/wrapup.sh
+. "$HARNESS_HOME/lib/wrapup.sh"
 
 MAX=10; CLEAN=0
 for _a in "$@"; do
@@ -65,6 +71,7 @@ RETRY=${HERMES_RETRY_ON_TIMEOUT:-0}
 UNCLAIM=${HERMES_UNCLAIM_ON_TIMEOUT:-1}
 TIMEOUT_CAP_MIN=${HERMES_TIMEOUT_CAP:-120}; TIMEOUT_CAP_MIN=${TIMEOUT_CAP_MIN%m}
 RESUME_ON_STOP=${HERMES_RESUME_ON_STOP:-1}
+WRAPUP=${HERMES_WRAPUP_TIMEOUT:-15m}
 # Marks these Hermes sessions as unattended harness runs. Hermes passes its environment to
 # shell hooks, so lib/hooks/bd_notes_guard.py acts only here, not in interactive Hermes.
 export HERMES_HARNESS_RUN=1
@@ -100,6 +107,17 @@ PROMPT="Follow AGENTS.md \"Autonomous Beads workflow\" for the repo in /workspac
 RESUME_PROMPT="$NO_HUMAN Continue the issue you already claimed, from where you stopped, \
 following AGENTS.md \"Autonomous Beads workflow\" until its PR is open. Do not start another issue. \
 If you cannot finish it, follow the blocker step and print RUN_BLOCKED."
+# Sent when resuming a session that timed out or crashed, to save its work for the next run.
+wrapup_prompt() { # <issue id or empty> <why the session is being wrapped up>
+  local id=${1:-<the issue you claimed>}
+  printf '%s' "No human is present; never ask a question. $2 This session gets only a few more \
+minutes, so do NOT continue the implementation: save your progress for the next run, in as few \
+terminal commands as possible. (1) In /workspace/$NAME, if branch bd/$id has uncommitted or \
+unpushed changes, commit them as \"wip($id): <summary>\" and git push origin bd/$id (never main, \
+never force-push). (2) bd update $id --append-notes \"WIP: <bd/$id if pushed, else none> - <what \
+is done, what you found out, the next step>\", then bd dolt push. Do not close, unclaim or block \
+the issue. Then print RUN_WIP_SAVED on its own line and stop."
+}
 
 # Effective model: HERMES_ARGS (-m/--model, --provider) wins over config.yaml.
 read -ra _args <<< "${HERMES_ARGS:-}"
@@ -152,10 +170,11 @@ unclaim_stale() { # <logfile>
   fi
 }
 
-# One Hermes run. Sets: log, timed, status, class.
-run_once() { # <timeout> [session-id-to-resume]
+# One Hermes run. Sets: log, timed, status, class, run_start (YYYYMMDD_HHMMSS, to find the session).
+run_once() { # <timeout> [session-id-to-resume [prompt]]
   local stamp start end issue prompt=$PROMPT; local -a ps resume=()
-  if [ -n "${2:-}" ]; then resume=(--resume "$2"); prompt=$RESUME_PROMPT; fi
+  if [ -n "${2:-}" ]; then resume=(--resume "$2"); prompt=${3:-$RESUME_PROMPT}; fi
+  run_start=$(date +%Y%m%d_%H%M%S)
   stamp=$(date +%Y%m%d-%H%M%S)
   # two runs in the same second (a fast resume/retry) must not overwrite each other's log
   local n=1 base=$stamp
@@ -206,21 +225,59 @@ notes_check() {
   hh_stamp_line "RUN_RESULT=NOTES_LOST" >> "$timed" 2>/dev/null || true
 }
 
+# The session of the run that just ended: its footer, else (killed or crashed, no footer) the
+# harness session that started with it in Hermes' store.
+run_session() { local s; s=$(session_id "$log"); [ -n "$s" ] || s=$(hh_find_session "$run_start"); printf '%s' "$s"; }
+
+# A TIMEOUT or AGENT_CRASHED run leaves no PR. Resume its session for a short wrap-up that pushes
+# WIP and appends a "WIP:" note (lib/wrapup.sh), so the next run starts from it, not from zero.
+# The wrap-up gets its own log ending WRAPUP_OF=<failed log> and the failed run's RUN_RESULT;
+# class is left as the failed run's class.
+wrap_up() { # <log with the claim> [session id, when already known]
+  local failed=$class failed_log=$log sid=${2:-} why
+  case "$WRAPUP" in 0|0m|0s|'') return 0 ;; esac
+  [ -n "$sid" ] || sid=$(run_session)
+  [ -n "$sid" ] || { echo "note: no Hermes session found for $failed_log; cannot save its progress"; return 0; }
+  case "$failed" in
+    TIMEOUT) why="The run's time limit was reached." ;;
+    *) why="Hermes crashed with an error (a crash) and this session was resumed after it." ;;
+  esac
+  echo "Run ended as $failed; resuming session $sid for a $WRAPUP wrap-up to save its progress."
+  run_once "$WRAPUP" "$sid" "$(wrapup_prompt "$(claimed_issue "$1")" "$why")"
+  if hh_wip_saved "$log"; then echo "Progress saved (RUN_WIP_SAVED); see the issue's WIP: note."
+  else echo "warning: the wrap-up did not confirm RUN_WIP_SAVED (it ended as $class); progress may be lost. See $log"; fi
+  { echo "WRAPUP_OF=$failed_log"; echo "RUN_RESULT=$failed"; } >> "$log"
+  hh_stamp_line "RUN_RESULT=$failed" >> "$timed" 2>/dev/null || true
+  class=$failed
+}
+
+# Save what a failed run did, then release its claim.
+save_and_release() { # <log with the claim> [session id]
+  case "$class" in TIMEOUT|AGENT_CRASHED) ;; *) return 0 ;; esac
+  wrap_up "$@"
+  unclaim_stale "$1"
+}
+
 final=OK_DONE
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
-  stopped_log=""
-  run_once "$TIMEOUT"
-  if [ "$class" = TIMEOUT ]; then
-    unclaim_stale "$log"
-    if [ "$RETRY" = 1 ]; then
-      cur=${TIMEOUT%m}; case "$cur" in ''|*[!0-9]*) cur=90 ;; esac
-      bigger=$(( cur * 2 )); [ "$bigger" -gt "$TIMEOUT_CAP_MIN" ] && bigger=$TIMEOUT_CAP_MIN
-      echo "Timed out; retrying the issue once with ${bigger}m."
-      run_once "${bigger}m"
-      [ "$class" = TIMEOUT ] && unclaim_stale "$log"
+  stopped_log=""; sid=""
+  run_once "$TIMEOUT"; claim_log=$log
+  if [ "$class" = TIMEOUT ] && [ "$RETRY" = 1 ]; then
+    cur=${TIMEOUT%m}; case "$cur" in ''|*[!0-9]*) cur=90 ;; esac
+    bigger=$(( cur * 2 )); [ "$bigger" -gt "$TIMEOUT_CAP_MIN" ] && bigger=$TIMEOUT_CAP_MIN
+    sid=$(run_session)
+    if [ -n "$sid" ]; then
+      # same session: it keeps everything it explored, and its claim
+      echo "Timed out; retrying the issue once with ${bigger}m by resuming session $sid."
+      run_once "${bigger}m" "$sid"
+    else
+      unclaim_stale "$log"
+      echo "Timed out; retrying the issue once with ${bigger}m (no session found to resume)."
+      run_once "${bigger}m"; claim_log=$log
     fi
   fi
+  save_and_release "$claim_log" "$sid"
   # The agent ended its turn mid-issue (e.g. asked a question nobody will answer):
   # resume that same session once. Never twice: a second early stop ends the loop.
   # First ask GitHub: the agent may have opened the PR but never printed its URL.
@@ -237,7 +294,7 @@ for i in $(seq 1 "$MAX"); do
       echo "Agent ended its turn without a PR or a stop marker; resuming session $sid once."
       run_once "$TIMEOUT" "$sid"
       # the claim is in the first log, not the resumed one
-      [ "$class" = TIMEOUT ] && unclaim_stale "$stopped_log"
+      save_and_release "$stopped_log" "$sid"
     else
       echo "note: no session id in $log; cannot resume"
     fi
@@ -251,6 +308,7 @@ for i in $(seq 1 "$MAX"); do
     BLOCKED) echo "Issue blocked — stopping. See $log"; break ;;
     MODEL_API_ERROR) echo "Agent made no progress (model/API error) — stopping. See $log"; break ;;
     TIMEOUT) echo "Run timed out — stopping. See $log"; break ;;
+    AGENT_CRASHED) echo "Hermes crashed (traceback in the log) — stopping. See $claim_log"; break ;;
     AGENT_STOPPED) echo "Agent stopped mid-issue without a PR — stopping. Read the end of $log, then resume by hand: hermes --resume $(session_id "$log")"; break ;;
     *) echo "Run ended as $class — stopping. See $log"; break ;;
   esac

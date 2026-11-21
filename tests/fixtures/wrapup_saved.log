@@ -1,0 +1,9 @@
+Query: The run's time limit was reached. Save your progress.
+  ┊ 💻 $ cd /workspace/widgets && git add -A && git commit -m "wip(widgets-abc): runner skeleton" && git push origin bd/widgets-abc
+  ┊ 💻 $ bd update widgets-abc --append-notes "WIP: bd/widgets-abc - runner skeleton; next: checksum guard" && bd dolt push
+RUN_WIP_SAVED
+
+Resume this session with:
+  hermes --resume 20261120_155724_501770
+Session:        20261120_155724_501770
+Messages:       130 (2 user, 70 tool calls)

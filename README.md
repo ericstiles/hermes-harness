@@ -100,7 +100,7 @@ hermes-launch --dry-run && hermes-launch
 
 ## Env
 `GITHUB_REPO` (default: parsed from `origin`), `RUN_TIMEOUT` (90m),
-`HERMES_RETRY_ON_TIMEOUT`, `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
+`HERMES_RETRY_ON_TIMEOUT`, `HERMES_WRAPUP_TIMEOUT` (15m, 0 disables), `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
 `HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_TEST_CMD` (for `hermes-status --tests`),
 `REVIEWER_GH_TOKEN`, `REVIEWER_AGENT`, `REVIEWER_MODEL`, `OLLAMA_HOST_URL`,
 `HERMES_REVIEW_PYTHON` (for `hermes-review`).
@@ -169,8 +169,9 @@ After each run `hermes-run` prints `RUN_TIME start= end= elapsed= issue=`; at th
 
 ## Limits
 - One run at a time across all repos (one local model). The per-repo lock stops two runs in the same repo; the active-process check stops runs in different repos.
-- Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED NOTES_LOST UNKNOWN (`lib/classify.sh`; patterns anchored to real log formats, with regression fixtures in `tests/fixtures`).
+- Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN AUTH_ERROR BEADS_SYNC_ERROR AGENT_STOPPED AGENT_CRASHED NOTES_LOST UNKNOWN (`lib/classify.sh`; patterns anchored to real log formats, with regression fixtures in `tests/fixtures`).
 - AGENT_STOPPED: the session ended cleanly but with no PR URL and no `RUN_BLOCKED`/`NO_READY_WORK`, typically because the model asked a question nobody will answer (in `-q` mode a reply without a tool call ends the session). `hermes-run` first asks GitHub whether `bd/<issue>` already has a PR (then it is OK_DONE), otherwise resumes the same session once with a "no human is present, continue" prompt (`HERMES_RESUME_ON_STOP=0` disables). The run prompt and `templates/AGENTS_WORKFLOW.md` both tell the agent no human is present.
+- TIMEOUT and AGENT_CRASHED (Hermes died on an exception: a traceback, no session footer, exit not 124/130): neither leaves a PR, so `hermes-run` saves the work before releasing the claim. A killed or crashed Hermes prints no `Session:` footer, but its messages are already in Hermes' store, so `hermes-run` finds the session with `hermes sessions list` (the harness session that started with the run) and resumes it for `HERMES_WRAPUP_TIMEOUT` (15m) with a wrap-up prompt: push WIP to `bd/<id>`, `bd update <id> --append-notes "WIP: ..."`, `bd dolt push`, print `RUN_WIP_SAVED`. The wrap-up has its own log ending `WRAPUP_OF=<killed run's log>` and the killed run's `RUN_RESULT`; without `RUN_WIP_SAVED` it warns. The next run reads the `WIP:` note and continues on `origin/bd/<id>` (template step 3). `HERMES_RETRY_ON_TIMEOUT=1` resumes the killed session (it keeps its context and claim) instead of starting over, and wraps up only if the retry times out too. `hermes-supervise` reports `WIP_SAVED=yes|no`, and recommends splitting the issue at the first timeout when the run wrote no project file and made no commit (`lib/wrapup.sh`).
 - NOTES_LOST: after an OK_DONE run, `hermes-run` pulls beads and checks the PR's bead (its `Bead:` line, else the claimed issue): it must be `in_progress` with the PR URL in its notes, as `hermes-review` requires; a review-fix issue the run claimed must have the URL too. If not, the log gets `NOTES_CHECK: <id> missing <url> in notes` (or `status ...`), the run becomes NOTES_LOST and the loop stops; `hermes-supervise` prints the `bd update ... --append-notes "PR: <url>"` repair. Read-only; if `gh`/`bd` cannot answer it warns and keeps OK_DONE (`lib/notes_check.sh`).
 
 ## Tests

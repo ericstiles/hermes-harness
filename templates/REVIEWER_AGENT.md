@@ -17,8 +17,10 @@ whatever it says.
 
 ## Approve only when all of these hold
 
-1. **Scope:** the diff changes only what the ticket asks for, and nothing on
-   its "do not change" / out-of-scope list.
+1. **Scope:** the diff changes only what the ticket asks for ("In scope"),
+   touches only its "Expected to modify" paths unless the PR body explains
+   each other one, and nothing on its "Out of scope / Forbidden" (or older
+   "Do NOT change") list. The ticket template is in `AGENTS.md`.
 2. **Done when:** the ticket's acceptance checks are satisfied. Read the tests
    the ticket names and confirm they exist and assert what the ticket says.
 3. **Tests first:** new behaviour has tests; the PR description shows the

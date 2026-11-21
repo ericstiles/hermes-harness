@@ -24,7 +24,8 @@ Usage:
   HERMES_REPO=/path/to/target-repo hermes-launch [options]
 
 Options:
-  --timeout DURATION  per-run kill timeout passed to hermes-run as RUN_TIMEOUT
+  --timeout DURATION  per-run time limit passed to hermes-run as RUN_TIMEOUT (a run
+                      still making progress is extended: HERMES_EXTEND, HERMES_EXTEND_CAP)
                       (e.g. 120m). Default: hermes-run's own default, 90m.
   --max N             stop after N issues (default 10). Each issue is one
                       Hermes run, one PR.

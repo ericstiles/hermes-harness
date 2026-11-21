@@ -165,13 +165,17 @@ f=$STUB_FIXTURE; [ "$n" -ge 2 ] && [ -n "$STUB_FIXTURE_2" ] && f=$STUB_FIXTURE_2
 [ -n "$f" ] && { cat "$f"; exit "${STUB_EXIT:-0}"; }
 echo "  ┊ 💻 \$ bd update ${STUB_PREFIX:-widgets}-abc --claim --json"
 if [ "$n" = 1 ] && [ "$STUB_HANG_FIRST" = 1 ]; then sleep 30; exit 0; fi
+# STUB_WRITES="<path> <count>": first call writes <path> <count> times, 0.4s apart, then opens the PR
+if [ "$n" = 1 ] && [ -n "$STUB_WRITES" ]; then
+  set -- $STUB_WRITES; k=0
+  while [ "$k" -lt "$2" ]; do echo "  ┊ ✍️  write     $1  0.1s"; sleep 0.4; k=$((k+1)); done
+fi
 echo "PR https://github.com/o/r/pull/1"; echo; echo "Resume this session with:"; echo "Messages:       9 (1 user, 8 tool calls)"
 S
 chmod +x "$tmp/bin/"*
 export STUB_LOG="$tmp/stub.log" STUB_COUNT="$tmp/count" GH_TOKEN=x
-TOUT=$(command -v timeout || command -v gtimeout)
 runit() { (cd "$W" && PATH="$tmp/bin:$PATH" "$@"); }
-if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; else
+if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need python3 (watchdog, tsfilter)"; else
   # repo + logs come from the CURRENT directory, not the harness
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
   echo "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin (ssh url)" || bad "derive ssh" "$out"
@@ -213,6 +217,8 @@ if [ -z "$TOUT" ]; then echo "skip - hermes-run tests need timeout/gtimeout"; el
   . "$HERE/notes_check_tests.sh"
   # a TIMEOUT or a Hermes crash resumes the session for a wrap-up that saves WIP (AGENT_CRASHED)
   . "$HERE/wrapup_tests.sh"
+  # progress-aware time limit (lib/watchdog.py)
+  . "$HERE/watchdog_tests.sh"
   # --clean: reset the sandbox workspace to origin/main, saving uncommitted work first
   . "$HERE/sandbox_clean_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
@@ -232,7 +238,7 @@ if command -v uv >/dev/null 2>&1; then
   # Lint + format with the repo's ruff.toml (pinned ruff, so results do not drift).
   for lint in "check --output-format concise" "format --check"; do
     # shellcheck disable=SC2086  # $lint is two words on purpose
-    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks tests/py 2>&1); rc=$?
+    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py tests/py 2>&1); rc=$?
     [ $rc -eq 0 ] && ok "ruff ${lint%% *}: clean" || bad "ruff ${lint%% *}" "$(echo "$out" | tail -n 20)"
   done
 else

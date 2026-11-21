@@ -24,7 +24,7 @@ hermes_classify() {
   prev=$(tr -d '\r' < "$f" | grep -E '^RUN_RESULT=[A-Z_]+$' | tail -n 1 | cut -d= -f2)
   if [ -n "$prev" ]; then echo "$prev"; return 0; fi
 
-  # 2. timeout(1) exit status.
+  # 2. Time-limit exit status (lib/watchdog.py exits 124, like timeout(1)).
   if [ "$ec" = "124" ]; then echo TIMEOUT; return 0; fi
 
   # Logs are tee'd from a pty: strip CR so whole-line sentinels match.

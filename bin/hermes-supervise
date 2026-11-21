@@ -113,6 +113,8 @@ esac
 echo "CLASS=$class"; echo "ISSUE=${issue:-unknown}"; echo "LOG=$log"
 echo "ACTION=$action"; [ -n "$next" ] && echo "NEXT=$next"; echo "WHY=$why"
 [ -n "$wip" ] && { echo "WIP_SAVED=$wip"; echo "WRAPUP_OF=$wrapped"; }
+# the time-limit watchdog's last decision (EXTENDED / NO_PROGRESS / CAP_REACHED / TIME_LIMIT)
+wd=$(tr -d '\r' < "$work_log" | grep '^WATCHDOG: ' | tail -n 1); [ -n "$wd" ] && echo "WATCHDOG=$wd"
 echo "relaunches_today=$relaunches"
 echo "--- evidence (last 12 lines, CR stripped)"; tail -n 12 "$log" | tr -d '\r' | sed 's/^/  /'
 exit 0

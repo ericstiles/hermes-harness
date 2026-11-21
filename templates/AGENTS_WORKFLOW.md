@@ -81,6 +81,10 @@ overrides the global "do not commit or push" default for this workflow only.
      ran out of time or crashed and saved its work), read it first and, when
      `origin/bd/<id>` exists, continue on it: `git checkout -B bd/<id> origin/bd/<id>`.
      Otherwise branch `bd/<id>` from `origin/main`. Implement, run tests and lint.
+     At each milestone (tests written, tests pass) run
+     `bd update <id> --append-notes "PROGRESS: <milestone>"`: the harness's time
+     limit is extended while files are written, commits made or such notes added.
+     Scratch files in `/tmp` do not count.
   4. If tests pass: commit, push the branch, open a PR with `gh pr create`
      (base `main`) titled `<type>(<id>): <summary>` with these lines in the
      body: `Bead: <id>` and `Hermes-Session: <your session id>` (from your

@@ -42,9 +42,10 @@ out=$(STUB_FIXTURE="$FX/ok_done.log" STUB_EXIT=3 runit "$BIN/hermes-run" 1 2>&1)
 [ $rc -eq 1 ] && grep -q '^RUN_RESULT=UNKNOWN$' "$(only_log)" \
   && ok "timestamps: exit status of hermes chat is preserved through the filter" || bad "timestamps: exit status" "$rc $(tail -2 "$(only_log)")"
 
-# a dead filter (here: a python3 that exits at once) must not cut the raw log or kill the run
+# a dead filter (here: a python3 that exits at once for tsfilter.py only; the watchdog still
+# runs on the real python3) must not cut the raw log or kill the run
 rm -rf "$W/logs"; mkdir -p "$tmp/deadpy"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/deadpy/python3"; chmod +x "$tmp/deadpy/python3"
+printf '#!/bin/sh\ncase "$*" in *tsfilter.py*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "$tmp/deadpy/python3"; chmod +x "$tmp/deadpy/python3"
 { seq 1 20000 | sed 's/^/filler line /'; tail -n 8 "$FX/ok_done.log"; } > "$tmp/big.log"
 out=$(PATH="$tmp/deadpy:$PATH" STUB_FIXTURE="$tmp/big.log" runit "$BIN/hermes-run" 1 2>&1); rc=$?
 { cat "$tmp/big.log"; echo "RUN_RESULT=OK_DONE"; } > "$tmp/want_big"

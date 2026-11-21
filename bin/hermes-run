@@ -11,7 +11,12 @@
 #         Docker/colima running, hermes + gh + bd on PATH.
 #
 # Env (all optional):
-#   RUN_TIMEOUT=90m              per-run kill timeout (local 27B model needs > 45m)
+#   RUN_TIMEOUT=90m              per-run time limit (local 27B model needs > 45m); at the limit
+#                                lib/watchdog.py extends a run that is making progress
+#   HERMES_EXTEND=20m            extension per check when the interval since the last check
+#                                shows progress (project file written/patched outside /tmp,
+#                                git commit, PROGRESS: note); 0 = hard kill at RUN_TIMEOUT
+#   HERMES_EXTEND_CAP=180m       no run (with its extensions) lives longer than this
 #   HERMES_RETRY_ON_TIMEOUT=0|1  on a timeout, retry the same issue once with a
 #                                larger timeout (2x, capped at HERMES_TIMEOUT_CAP=120m),
 #                                resuming the killed session when it can be found
@@ -72,14 +77,15 @@ UNCLAIM=${HERMES_UNCLAIM_ON_TIMEOUT:-1}
 TIMEOUT_CAP_MIN=${HERMES_TIMEOUT_CAP:-120}; TIMEOUT_CAP_MIN=${TIMEOUT_CAP_MIN%m}
 RESUME_ON_STOP=${HERMES_RESUME_ON_STOP:-1}
 WRAPUP=${HERMES_WRAPUP_TIMEOUT:-15m}
+EXTEND=${HERMES_EXTEND:-20m}
+EXTEND_CAP=${HERMES_EXTEND_CAP:-180m}
 # Marks these Hermes sessions as unattended harness runs. Hermes passes its environment to
 # shell hooks, so lib/hooks/bd_notes_guard.py acts only here, not in interactive Hermes.
 export HERMES_HARNESS_RUN=1
 : "${GH_TOKEN:?export GH_TOKEN (fine-grained, this repo only)}"
 
-# macOS has no `timeout` by default; coreutils provides gtimeout.
-TO=$(command -v timeout || command -v gtimeout || true)
-[ -n "$TO" ] || { echo "install coreutils for timeout/gtimeout" >&2; exit 2; }
+# The time limit is enforced by lib/watchdog.py (exit 124 like timeout(1)), not timeout(1).
+WATCHDOG="$HARNESS_HOME/lib/watchdog.py"
 
 # --- single-instance lock per repo (mkdir is atomic and portable; macOS has no flock) ---
 mkdir -p "$LOG_DIR"
@@ -137,7 +143,7 @@ for ((j = 0; j < ${#_args[@]}; j++)); do
   esac
 done
 IMAGE=$(_cfg terminal.docker_image)
-echo "== repo: $REPO | model: ${MODEL:-unknown} | provider: ${PROVIDER:-unknown} | sandbox: ${IMAGE:-default} | timeout: $TIMEOUT | retry-on-timeout: $RETRY | max issues: $MAX"
+echo "== repo: $REPO | model: ${MODEL:-unknown} | provider: ${PROVIDER:-unknown} | sandbox: ${IMAGE:-default} | timeout: $TIMEOUT (+$EXTEND on progress, cap $EXTEND_CAP) | retry-on-timeout: $RETRY | max issues: $MAX"
 if [ "$CLEAN" = 1 ]; then
   [ -n "$IMAGE" ] || { echo "clean: terminal.docker_image is not set, so the sandbox container cannot be found; not starting a run" >&2; exit 2; }
   hh_sandbox_reset "$IMAGE" "$NAME" "$LOG_DIR" || exit 2
@@ -171,9 +177,10 @@ unclaim_stale() { # <logfile>
 }
 
 # One Hermes run. Sets: log, timed, status, class, run_start (YYYYMMDD_HHMMSS, to find the session).
-run_once() { # <timeout> [session-id-to-resume [prompt]]
-  local stamp start end issue prompt=$PROMPT; local -a ps resume=()
+run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wrap-up: no extension)
+  local stamp start end issue prompt=$PROMPT extend=$EXTEND cap=$EXTEND_CAP; local -a ps resume=()
   if [ -n "${2:-}" ]; then resume=(--resume "$2"); prompt=${3:-$RESUME_PROMPT}; fi
+  if [ -n "${3:-}" ]; then extend=0; cap=$1; fi
   run_start=$(date +%Y%m%d_%H%M%S)
   stamp=$(date +%Y%m%d-%H%M%S)
   # two runs in the same second (a fast resume/retry) must not overwrite each other's log
@@ -191,7 +198,8 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]
   trap '' PIPE
   # shellcheck disable=SC2086  # HERMES_ARGS is intentionally word-split
   # --pass-session-id: Hermes sees its session id and writes `Hermes-Session:` in the PR.
-  "$TO" "$1" hermes chat --pass-session-id ${resume[@]+"${resume[@]}"} ${HERMES_ARGS:-} -q "$prompt" 2>&1 \
+  python3 -u "$WATCHDOG" --limit "$1" --extend "$extend" --cap "$cap" --log "$log" -- \
+    hermes chat --pass-session-id ${resume[@]+"${resume[@]}"} ${HERMES_ARGS:-} -q "$prompt" 2>&1 \
     | tee "$log" 2>"$tee_err" | python3 -u "$HARNESS_HOME/lib/tsfilter.py" --log "$timed"
   ps=("${PIPESTATUS[@]}")
   trap - PIPE

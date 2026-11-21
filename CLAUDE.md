@@ -4,6 +4,29 @@ This file provides instructions and context for AI coding agents working on this
 
 Project-specific agent rules: @AGENTS_LOCAL.md
 
+## Git profile: branch, commit and PR (opt-in)
+
+This repository opts in to a branch-and-PR workflow for interactive sessions;
+it replaces the Conservative "do not commit or push" default below. A current
+"do not commit" or "do not push" instruction from the user still wins.
+
+- When a change is ready, without asking first: create a branch from
+  `origin/main` (`<type>/<short-topic>`, e.g. `docs/drop-model-filter`, or
+  `bd/<id>` for bead work), commit with the conventional-commit wrapper
+  scripts, push it with `git push -u`, and open a PR against `main` with
+  `gh pr create`. Put the bead id and the quality gate result in the PR body.
+- This repo has `push.default=upstream`, so a branch that tracks `origin/main`
+  pushes to `main`. Always create it untracked and push with an explicit
+  destination: `git switch --no-track -c <branch> origin/main`, then
+  `git push -u origin HEAD:refs/heads/<branch>`.
+- Before every commit, `tests/run_tests.sh` must pass; if it fails, do not
+  commit, report the failure.
+- Several related changes may share one branch and PR; unrelated changes get
+  their own.
+- Still ask first: pushing to `main`, merging a PR, force-pushing, `bd dolt push`,
+  and anything that writes outside this repository (e.g. `bin/hermes-setup`
+  into a target repo).
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->
 ## Beads Issue Tracker
 

@@ -10,6 +10,11 @@ written before it: the time since the previous output. After a tool step
 (┊ ...) that is roughly the tool's run time; before a "Hermes" box it is the
 time the response took. Best effort: Hermes does not say when work ends.
 
+Stall warning: when no input arrives for HERMES_STALL_WARN (default 10m;
+Ns/Nm/Nh, bare = seconds; 0 disables) a "[HH:MM:SS] no output for 10m (last:
+HH:MM:SS)" line goes to stdout and --log, repeating each further interval.
+It never reaches the raw log: this filter sits after `tee raw.log`.
+
 Crash safety matters more than formatting. This filter sits behind
 `tee raw.log`; if it exited early, tee would get EPIPE and could stop writing
 the RAW log that classification depends on. So the filter never exits before
@@ -20,6 +25,8 @@ Test hook: HH_TS_FAKE_CLOCK="t1 t2 ..." supplies one epoch second per input
 line (the last value repeats), so tests need no sleeping. Python 3.9+.
 """
 import os
+import re
+import select
 import sys
 import time
 from typing import BinaryIO, Callable, List, Mapping, Optional
@@ -27,6 +34,10 @@ from typing import BinaryIO, Callable, List, Mapping, Optional
 Clock = Callable[[], float]
 
 DEFAULT_MIN_GAP = 2.0
+DEFAULT_STALL = 600.0
+READ_CHUNK = 65536
+_DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd]?)$")
+_UNIT = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def fmt_clock(epoch: float) -> str:
@@ -50,6 +61,28 @@ def min_gap_from_env(environ: Mapping[str, str]) -> float:
         warn("HERMES_TS_MIN_GAP=%r is not a number; using %gs" % (raw, DEFAULT_MIN_GAP))
         return DEFAULT_MIN_GAP
     return max(value, 0.0)
+
+
+def stall_from_env(environ: Mapping[str, str]) -> float:
+    """HERMES_STALL_WARN in seconds, parsed like RUN_TIMEOUT (90m, 30s, 2h, 45); 0 = off."""
+    raw = environ.get("HERMES_STALL_WARN", "").strip()
+    match = _DURATION.match(raw) if raw else None
+    if raw and not match:
+        warn("HERMES_STALL_WARN=%r is not a duration like 10m; using 10m" % raw)
+    if not match:
+        return DEFAULT_STALL
+    return float(match.group(1)) * _UNIT[match.group(2)]
+
+
+def fmt_stall(seconds: float) -> str:
+    """10m, 1m30s, 2h, 2h05m, 45s: the style HERMES_STALL_WARN is written in."""
+    s = int(round(seconds))
+    hours, minutes, secs = s // 3600, (s % 3600) // 60, s % 60
+    if hours:
+        return "%dh" % hours + ("%02dm" % minutes if minutes else "")
+    if minutes:
+        return "%dm" % minutes + ("%02ds" % secs if secs else "")
+    return "%ds" % secs
 
 
 def make_clock(environ: Mapping[str, str]) -> Clock:
@@ -132,12 +165,66 @@ def format_line(line: str, now: float, prev: Optional[float], min_gap: float) ->
     return out
 
 
-def run(stdin: BinaryIO, sinks: List[Sink], clock: Clock, min_gap: float) -> None:
+def wait_readable(fd: int, timeout: float) -> bool:
+    """True when fd has input (or select fails: fall back to a blocking read)."""
+    try:
+        ready, _, _ = select.select([fd], [], [], timeout)
+    except (OSError, ValueError):
+        return True
+    return bool(ready)
+
+
+class LineReader:
+    """Lines from a file descriptor, with a timeout. Reads the fd directly so
+    no input can sit in a Python buffer while select() reports a stall."""
+
+    def __init__(self, fd: int) -> None:
+        self.fd = fd
+        self.pending = b""
+        self.eof = False
+
+    def next_line(self, timeout: Optional[float] = None) -> Optional[bytes]:
+        """The next line; b"" at end of input; None if `timeout` passed with no input."""
+        while True:
+            end = self.pending.find(b"\n")
+            if end >= 0:
+                line, self.pending = self.pending[: end + 1], self.pending[end + 1 :]
+                return line
+            if self.eof:
+                line, self.pending = self.pending, b""
+                return line
+            if timeout is not None and not wait_readable(self.fd, timeout):
+                return None
+            chunk = os.read(self.fd, READ_CHUNK)
+            if chunk:
+                self.pending += chunk
+            else:
+                self.eof = True
+
+
+def stall_line(waited: float, last: float, any_output: bool) -> str:
+    since = ("last: %s" if any_output else "started: %s") % fmt_clock(last)
+    return "[%s] no output for %s (%s)\n" % (fmt_clock(time.time()), fmt_stall(waited), since)
+
+
+def run(
+    reader: LineReader, sinks: List[Sink], clock: Clock, min_gap: float, stall: float = 0.0
+) -> None:
     prev = None
+    quiet_since, last_wall, any_output, warned = time.monotonic(), time.time(), False, 0
     while True:
-        raw = stdin.readline()
+        timeout = None
+        if stall > 0:
+            timeout = max(stall * (warned + 1) - (time.monotonic() - quiet_since), 0.0)
+        raw = reader.next_line(timeout)
+        if raw is None:
+            warned += 1
+            for sink in sinks:
+                sink.write(stall_line(stall * warned, last_wall, any_output))
+            continue
         if not raw:
             return
+        quiet_since, last_wall, any_output, warned = time.monotonic(), time.time(), True, 0
         line = raw.decode("utf-8", errors="replace").rstrip("\n").replace("\r", "")
         try:
             now = clock()
@@ -169,6 +256,7 @@ def parse_args(argv: List[str]) -> Optional[str]:
 
 USAGE = """Usage: tsfilter.py [--log FILE] < STREAM
   --log FILE   also write each timestamped line to FILE (hermes-run: run-<stamp>.timed.txt)
+  HERMES_STALL_WARN=10m  warn after this long with no input (Ns/Nm/Nh; 0 = off)
   -h, --help   show this help and exit
 """
 
@@ -179,11 +267,13 @@ def main(argv: List[str]) -> int:
         return 0
     log_path = parse_args(argv)
     sinks = [Sink(sys.stdout.buffer, "stdout", is_stdout=True), open_log(log_path)]
+    reader = LineReader(sys.stdin.fileno())
     try:
-        run(sys.stdin.buffer, sinks, make_clock(os.environ), min_gap_from_env(os.environ))
+        clock, min_gap = make_clock(os.environ), min_gap_from_env(os.environ)
+        run(reader, sinks, clock, min_gap, stall_from_env(os.environ))
     except Exception as err:  # last resort: drain input raw so tee never sees EPIPE
         warn("unexpected error (%s); passing the rest through raw" % err)
-        for raw in iter(sys.stdin.buffer.readline, b""):
+        for raw in iter(reader.next_line, b""):
             for sink in sinks:
                 sink.write(raw.decode("utf-8", errors="replace").replace("\r", ""))
     return 0

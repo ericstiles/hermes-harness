@@ -52,3 +52,26 @@ eq "timestamps: a closed stdout still exits 0 without -u" "${PIPESTATUS[1]}" 0
 # hms/elapsed helpers: a backwards clock step never prints a negative elapsed
 out=$(bash -c ". '$ROOT/lib/runtime.sh'; hh_elapsed -5; hh_elapsed 59; hh_elapsed 2472; hh_elapsed 7500; TZ=UTC hh_hms 0" 2>&1)
 eq "timestamps: elapsed formats and clamps negatives" "$(echo $out)" "0s 59s 41m12s 2h05m 00:00:00"
+
+# stall warning (8s7.3): short real wait; the producer pauses 2.5s with HERMES_STALL_WARN=1s.
+# HERMES_TS_MIN_GAP=60 keeps the (+Ns) gap line out of the comparison.
+( printf 'first\n'; sleep 2.5; printf 'second\n' ) | tee "$tmp/ts11.raw" \
+  | HERMES_STALL_WARN=1s HERMES_TS_MIN_GAP=60 tsf --log "$tmp/ts11.log" > "$tmp/ts11.out" 2>"$tmp/ts11.err"
+unstamp() { sed -E 's/^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] //; s/\(last: [0-9]{2}:[0-9]{2}:[0-9]{2}\)/(last: T)/' "$1"; }
+want=$(printf 'first\nno output for 1s (last: T)\nno output for 2s (last: T)\nsecond')
+eq "timestamps: stall warning appears after HERMES_STALL_WARN with no output" "$(unstamp "$tmp/ts11.out")" "$want"
+eq "timestamps: stall warning is in the ts log too" "$(unstamp "$tmp/ts11.log")" "$want"
+grep -q 'no output' "$tmp/ts11.raw" && bad "timestamps: stall warning is not written to the raw log" "$(cat "$tmp/ts11.raw")" \
+  || ok "timestamps: stall warning is not written to the raw log"
+( printf 'a\n'; sleep 1.3; printf 'b\n' ) | HERMES_STALL_WARN=0 tsf > "$tmp/ts12.out" 2>&1
+grep -q 'no output' "$tmp/ts12.out" && bad "timestamps: HERMES_STALL_WARN=0 disables the stall warning" "$(cat "$tmp/ts12.out")" \
+  || ok "timestamps: HERMES_STALL_WARN=0 disables the stall warning"
+# duration parsing like RUN_TIMEOUT (bare = seconds); a bad value warns and keeps the 10m default
+out=$(cd "$ROOT/lib" && python3 -c '
+import tsfilter as t
+env = lambda v: t.stall_from_env({"HERMES_STALL_WARN": v} if v is not None else {})
+print(env(None), env("90m"), env("30s"), env("2h"), env("45"), env("0"), env("soon"), t.fmt_stall(600), t.fmt_stall(90), t.fmt_stall(7200))
+' 2>"$tmp/ts13.err")
+eq "timestamps: HERMES_STALL_WARN parses Ns/Nm/Nh, default 10m" "$out" "600.0 5400.0 30.0 7200.0 45.0 0.0 600.0 10m 1m30s 2h"
+grep -q "HERMES_STALL_WARN='soon'" "$tmp/ts13.err" && ok "timestamps: a bad HERMES_STALL_WARN warns once" \
+  || bad "timestamps: a bad HERMES_STALL_WARN warns once" "$(cat "$tmp/ts13.err")"

@@ -30,6 +30,9 @@
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
 #   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
+#   HERMES_STALL_WARN=10m        print "no output for 10m (last: HH:MM:SS)" to the terminal and
+#                                the timed log (never the raw log) after this much silence,
+#                                again each further interval; 0 = off
 #   HERMES_RESUME_ON_STOP=1      when the agent ends its turn mid-issue (no PR, no
 #                                RUN_BLOCKED/NO_READY_WORK: class AGENT_STOPPED),
 #                                resume that same session ONCE; 0 disables

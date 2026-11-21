@@ -1,4 +1,42 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Bash(git switch *)",
+      "Bash(git add *)",
+      "Bash(git push -u origin HEAD:refs/heads/*)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list)",
+      "Bash(gh pr list *)",
+      "Bash(tests/run_tests.sh)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/feat *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/fix *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/chore *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/docs *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/ci *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/build *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/perf *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/refactor *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/revert *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/style *)",
+      "Bash(/Users/wilder/repo/pre-commit-scripts/scripts/tst *)"
+    ],
+    "deny": [
+      "Bash(git push *refs/heads/main)",
+      "Bash(git push *refs/heads/main *)",
+      "Bash(git push *:main)",
+      "Bash(git push *:main *)",
+      "Bash(git push * main)",
+      "Bash(git push * main *)",
+      "Bash(git push -f*)",
+      "Bash(git push --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push *+*)",
+      "Bash(gh pr merge*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

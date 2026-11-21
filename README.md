@@ -31,7 +31,9 @@ Runs on the host next to `hermes-run`. For each open, non-draft `bd/<id>` PR:
    loaded).
 4. **Act** (the loop is drawn in `templates/AGENTS_WORKFLOW.md`, "Ticket lifecycle"):
    - **Approve** → `gh pr merge --rebase --match-head-commit`, then close the ticket T and
-     every open `review-fix` issue for the PR (`bd close --force`), `bd dolt push`.
+     every open `review-fix` issue for the PR (`bd close --force`), `bd dolt push`. It also
+     closes any open bead whose notes have a line `Fixed in PR <this PR's url>`: Hermes
+     adds that line when a review-fix needs a fix another open bead already describes.
    - **First rejection** → a comment listing each problem, and ONE `review-fix` issue F
      (checklist of the in-scope problems, PR link, branch `bd/T`, `Hermes-Session`). Its
      priority is P1 when the reviewer says `fix_priority: high`, else T's own priority.

@@ -255,3 +255,18 @@ def test_idle_watch_pass_makes_no_beads_calls(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cli, "review_pr", lambda ctx, pr: "skipped")
     assert cli.run_pass(Ctx(), None) == 0  # type: ignore[arg-type]
     assert beads_run.calls == []
+
+
+def test_fixed_in_lists_open_beads_whose_notes_say_fixed_in_this_pr() -> None:
+    url = "https://github.com/o/r/pull/7"
+    rows = [
+        {"id": "om-b", "status": "open", "notes": f"Fixed in PR {url} via review-fix om-f1"},
+        {"id": "om-c", "status": "open", "notes": f"see {url}"},
+        {"id": "om-d", "status": "open", "notes": f"Fixed in PR {url}0 via review-fix om-f9"},
+        {"id": "om-e", "status": "closed", "notes": f"Fixed in PR {url}"},
+    ]
+    fake = FakeRun(lambda cmd: Result(0, json.dumps(rows), ""))
+    pr = PullRequest(7, "fix(om-1): t", "Bead: om-1", "bd/om-1", "sha7", url)
+    assert Beads(fake).fixed_in(pr) == ["om-b"]
+    cmd = fake.calls[0][0]
+    assert cmd[:2] == ["bd", "list"] and "--notes-contains" in cmd

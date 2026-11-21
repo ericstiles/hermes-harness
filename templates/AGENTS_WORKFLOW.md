@@ -105,15 +105,25 @@ overrides the global "do not commit or push" default for this workflow only.
   1. `git fetch origin`, then check out the EXISTING branch:
      `git checkout -B bd/<T> origin/bd/<T>`. Never branch from main.
   2. Read the review: `gh pr view <N> --comments` and the issue's checklist.
-  3. Fix every point. Tests first for each bug, as in the issue sections below.
+  3. If a point can only be fixed by fixing what another open bead B describes
+     (`bd list` / `bd search`; e.g. a coverage gap caused by B's bug), fix B
+     here too, and mark it so no later run redoes it: `bd update B --claim`,
+     then `bd update B --append-notes "Fixed in PR <url> via review-fix <F>"`
+     (that exact line; the reviewer closes B when it merges the PR, so do NOT
+     close B). Name B in the commit message and in a PR comment
+     (`gh pr comment <N> --body "Also fixes B: <why>"`). If B is already
+     claimed by someone else, do not touch it: `bd update <F> --status blocked
+     --append-notes "needs B, claimed by <assignee>"`, print `RUN_BLOCKED`
+     naming B, and stop.
+  4. Fix every point. Tests first for each bug, as in the issue sections below.
      Run tests and lint.
-  4. Commit and `git push origin bd/<T>`. Do NOT open a new PR, do NOT
+  5. Commit and `git push origin bd/<T>`. Do NOT open a new PR, do NOT
      force-push, do NOT touch the PR title or the `Bead: <T>` line.
-  5. `bd update <F> --append-notes "PR: <url>"`, then verify with `bd show <F>`
+  6. `bd update <F> --append-notes "PR: <url>"`, then verify with `bd show <F>`
      and `bd show <T>` that both still have their `PR:` line. Do NOT close F or T: the
      reviewer closes both when it merges the PR. Print the PR URL on its own
      line.
-  6. A point you cannot fix in this PR's scope: file it as a new issue (rules
+  7. A point you cannot fix in this PR's scope: file it as a new issue (rules
      below) and say so in a PR comment (`gh pr comment <N>`).
   - **Rebase fixes** (labels `review-fix` and `rebase-conflict`, title
     `Rebase PR #N onto main (T)`): the PR only conflicts with main. After step 1,
@@ -121,7 +131,7 @@ overrides the global "do not commit or push" default for this workflow only.
     both sides, then run tests and lint. Push with
     `git push --force-with-lease origin bd/<T>`: the ONLY case where a
     force-push is allowed, and only to that branch. Change nothing else. Then
-    step 5.
+    step 6.
 - You ARE allowed and expected to create new beads issues. Do not ask first.
   File one with `bd create "<title>" -t bug|task -p <0-4> --deps discovered-from:<id> -d "<self-contained description>" --acceptance "<checks a test can assert>" --silent`
   whenever you:

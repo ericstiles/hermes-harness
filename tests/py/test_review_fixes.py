@@ -79,3 +79,22 @@ def test_rebase_issue_title_is_found_as_a_fix_for_its_pr() -> None:
 def test_conflict_escalation_note_says_it_is_a_conflict() -> None:
     note = fixes.escalation_note(PR, ["om-r1", "om-r2", "om-r3"], conflict=True)
     assert "rebase" in note and "om-r3" in note and "PR #7" in note
+
+
+def test_fixed_in_note_marks_a_bead_solved_by_a_pr() -> None:
+    assert fixes.fixed_in_note(URL, "om-f1") == f"Fixed in PR {URL} via review-fix om-f1"
+    assert fixes.is_fixed_in(f"PR: x\nFixed in PR {URL} via review-fix om-f1\n", URL)
+    assert fixes.is_fixed_in(f"Fixed in PR {URL}", URL)
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        f"PR: {URL}",  # its own PR link, not a fix by another PR
+        f"See {URL}; Fixed in PR {URL} maybe",  # mentioned mid-line
+        f"Fixed in PR {URL}0 via review-fix om-f9",  # PR #70, not #7
+        "",
+    ],
+)
+def test_fixed_in_ignores_other_mentions_of_the_pr(notes: str) -> None:
+    assert not fixes.is_fixed_in(notes, URL)

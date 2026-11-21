@@ -26,6 +26,20 @@ _SESSION = re.compile(r"^Hermes-Session:\s*(\S+)\s*$", re.MULTILINE)
 _REBASE_TITLE = "Rebase PR #{n} onto main ({bead})"
 
 
+FIXED_IN_PREFIX = "Fixed in PR "
+
+
+def fixed_in_note(pr_url: str, fix_id: str) -> str:
+    """The note Hermes adds to another open bead B that a review-fix PR also solves."""
+    return f"{FIXED_IN_PREFIX}{pr_url} via review-fix {fix_id}"
+
+
+def is_fixed_in(notes: str, pr_url: str) -> bool:
+    """True when a notes line starts with `Fixed in PR <pr_url>` (exact URL, not a prefix)."""
+    line = re.compile(rf"^{re.escape(FIXED_IN_PREFIX + pr_url)}(\s|$)", re.MULTILINE)
+    return line.search(notes) is not None
+
+
 def fix_title(bead: str, pr_number: int) -> str:
     return f"Review fixes for PR #{pr_number} ({bead})"
 
@@ -83,7 +97,9 @@ def fix_issue_args(
         f"## Where\n- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing; do not "
         f"branch from main)\n- Original ticket: {bead}\n- Hermes-Session: {session}\n\n"
         "## Fix scope\nOnly the checklist above. Do NOT change: anything else in the PR, the "
-        f"PR title or its `Bead: {bead}` line.\n\n"
+        f"PR title or its `Bead: {bead}` line. If a point needs a fix that another open bead "
+        "describes, follow AGENTS.md (Review-fix issues, step 3): claim it and note "
+        f"`{fixed_in_note(pr.url, '<this issue>')}` on it.\n\n"
         f"## Base branch\n`{branch}`: `git fetch origin && git checkout -B {branch} "
         f"origin/{branch}`\n\n"
         f"## How\n1. Read the review: `gh pr view {pr.number} --comments`.\n"

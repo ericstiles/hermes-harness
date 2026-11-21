@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from pr_review.fixes import HUMAN_LABEL, REVIEW_FIX_LABEL, is_fix_for
+from pr_review.fixes import FIXED_IN_PREFIX, HUMAN_LABEL, REVIEW_FIX_LABEL, is_fix_for, is_fixed_in
 from pr_review.meta import BRANCH_PREFIX
 from pr_review.shell import Runner, must
 
@@ -140,6 +140,17 @@ class Beads:
         ]
         rows = json.loads(must(self._run(cmd), "bd list").out or "[]")
         return [r for r in rows if is_fix_for(str(r.get("title", "")), pr_number)]
+
+    def fixed_in(self, pr: PullRequest) -> list[str]:
+        """Open beads another review-fix solved in this PR (a `Fixed in PR <url>` note line)."""
+        needle = FIXED_IN_PREFIX + pr.url
+        cmd = ["bd", "list", "--notes-contains", needle, "--json", "--limit", "0"]
+        rows = json.loads(must(self._run(cmd), "bd list").out or "[]")
+        return [
+            str(r["id"])
+            for r in rows
+            if r.get("status") != "closed" and is_fixed_in(str(r.get("notes") or ""), pr.url)
+        ]
 
     def escalate(self, bead: str, text: str) -> None:
         """Block the ticket and flag it for a human (`bd human list`)."""

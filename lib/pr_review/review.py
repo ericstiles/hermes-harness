@@ -146,12 +146,14 @@ def _file_debt(ctx: Context, verdict: Verdict, bead: str, pr: PullRequest) -> li
 
 
 def _merge(ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, fix_ids: list[str]) -> str:
-    _say(ctx, pr, f"approve, rebase-merge, close {' '.join([bead, *fix_ids])}")
+    # Beads a review-fix also solved (notes line `Fixed in PR <url>`) close with the PR.
+    to_close = list(dict.fromkeys([bead, *fix_ids, *ctx.beads.fixed_in(pr)]))
+    _say(ctx, pr, f"approve, rebase-merge, close {' '.join(to_close)}")
     if not ctx.dry_run:
         ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=True)
         ctx.github.merge(pr)
         _file_debt(ctx, verdict, bead, pr)
-        for issue in [bead, *fix_ids]:
+        for issue in to_close:
             ctx.beads.close(issue, pr)
         ctx.beads.push()
     return "merged"

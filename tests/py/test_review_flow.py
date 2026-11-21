@@ -44,11 +44,13 @@ class FakeBeads:
         notes: str = f"PR: {URL}",
         fixes: list[dict[str, object]] | None = None,
         labels: list[str] | None = None,
+        others: list[dict[str, object]] | None = None,
     ) -> None:
         self.info: dict[str, object] = {
             "status": status, "notes": notes, "priority": 2, "labels": labels or [],
         }  # fmt: skip
         self.fixes = fixes or []
+        self.others = others or []
         self.calls: list[tuple[str, object]] = []
 
     def show(self, bead: str) -> dict[str, object]:
@@ -59,6 +61,9 @@ class FakeBeads:
 
     def review_fixes(self, pr_number: int) -> list[dict[str, object]]:
         return self.fixes
+
+    def fixed_in(self, pr: PullRequest) -> list[str]:
+        return [str(r["id"]) for r in self.others]
 
     def close(self, bead: str, pr: PullRequest) -> None:
         self.calls.append(("close", bead))
@@ -109,6 +114,20 @@ def test_merge_closes_the_ticket_and_its_open_review_fixes_only(
     gh, bd = FakeGitHub(), FakeBeads(fixes=fixes)
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
     assert bd.calls == [("close", "om-1"), ("close", "om-f2"), ("push", None)]
+
+
+def test_merge_also_closes_beads_noted_as_fixed_in_this_pr(verdict: list[Verdict]) -> None:
+    fixes = [{"id": "om-f2", "status": "in_progress", "notes": f"PR: {URL}"}]
+    gh, bd = FakeGitHub(), FakeBeads(fixes=fixes, others=[{"id": "om-b"}, {"id": "om-f2"}])
+    assert review.review_pr(_ctx(gh, bd), PR) == "merged"
+    assert bd.calls == [("close", "om-1"), ("close", "om-f2"), ("close", "om-b"), ("push", None)]
+
+
+def test_rejection_leaves_beads_fixed_in_this_pr_open(verdict: list[Verdict]) -> None:
+    verdict[0] = Verdict(False, "no", (INSIDE,))
+    gh, bd = FakeGitHub(), FakeBeads(others=[{"id": "om-b"}])
+    assert review.review_pr(_ctx(gh, bd), PR) == "changes-needed"
+    assert ("close", "om-b") not in bd.calls
 
 
 def test_approval_with_out_of_scope_problems_files_debt_and_merges(

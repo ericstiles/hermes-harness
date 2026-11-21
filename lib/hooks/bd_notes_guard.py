@@ -91,7 +91,18 @@ def blocked(command: str) -> bool:
     return any(_segment_blocked(seg) for seg in _segments(tokens))
 
 
-def main() -> int:
+USAGE = """Usage: bd_notes_guard.py < HOOK_PAYLOAD_JSON
+  Takes no arguments: Hermes runs it as a pre_tool_call hook (~/.hermes/config.yaml)
+  and pipes the tool call as JSON on stdin.
+  -h, --help   show this help and exit
+"""
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if "-h" in args or "--help" in args:
+        print(USAGE + "\n" + (__doc__ or ""))
+        return 0
     # The hook lives in the machine-wide ~/.hermes/config.yaml, so it fires for every Hermes
     # session; it only acts in unattended hermes-run sessions, which export this variable.
     if os.environ.get(GATE_VAR) != "1":

@@ -2,9 +2,11 @@
 # hermes-run — work up to N beads issues in the CURRENT repo via one-shot Hermes runs.
 # Stops when the queue is empty, an issue is blocked, or a run fails/times out.
 #
-# Usage:  cd /path/to/target-repo && hermes-run [--clean] [MAX_ISSUES]
+# Usage: hermes-run [--clean] [MAX_ISSUES]     (run from the target repo, or set HERMES_REPO)
+#   MAX_ISSUES  stop after this many issues (default 10); each issue is one Hermes run, one PR
 #   --clean  before the first run, reset the sandbox's clone (/workspace/<name>) to
 #            origin/main; uncommitted work there is saved to logs/sandbox-dirty-*.patch
+#   -h, --help  show this help and exit (needs no repo)
 # Repo:   GITHUB_REPO=owner/name overrides; default is parsed from the origin remote.
 # Model:  HERMES_ARGS="--provider ollama-launch -m qwen3.8:27b-mlx" overrides the config default.
 # Needs:  GH_TOKEN exported (forwarded into the sandbox via docker_forward_env),
@@ -46,6 +48,7 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 hh_repo || exit 2
 cd "$REPO_ROOT" || exit 2
 # shellcheck source=../lib/classify.sh

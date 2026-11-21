@@ -8,6 +8,16 @@
 #                 toplevel of the current directory
 # bash 3.2 compatible.
 
+hh_help_requested() { # "$@" -> true when -h or --help is anywhere in the arguments
+  local a
+  for a in "$@"; do case $a in -h|--help) return 0 ;; esac; done
+  return 1
+}
+
+hh_print_help() { # <script> -> its header comment (lines 2.. up to the first non-# line), "# " stripped
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$1"
+}
+
 hh_repo() { # -> sets REPO_ROOT and LOG_DIR; returns 2 when no target repo
   if [ -n "${HERMES_REPO:-}" ]; then
     REPO_ROOT=$(cd "$HERMES_REPO" 2>/dev/null && pwd) || { echo "HERMES_REPO=$HERMES_REPO is not a directory" >&2; return 2; }

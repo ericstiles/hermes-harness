@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # hermes-status — READ-ONLY snapshot of the Hermes agent loop for the CURRENT repo.
 #
-# Usage: cd /path/to/target-repo && hermes-status [--tests]
+# Usage: hermes-status [--tests]     (run from the target repo, or set HERMES_REPO)
 #   --tests   also test origin/main in a throwaway worktree (cleaned up).
 #             Default command: pytest in a fresh venv. Override with
 #             HERMES_TEST_CMD="npm ci && npm test" (run inside the worktree).
+#   -h, --help  show this help and exit (needs no repo)
 # Env (all optional): HERMES_LOG_DIR HERMES_LOG_LINES=30 HERMES_PR_LIMIT=8 HERMES_REPO
 #
 # Never commits, pushes, pulls beads, or writes in the repo. Each section
@@ -16,6 +17,7 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 hh_repo || exit 0
 cd "$REPO_ROOT" || exit 0
 LINES_N=${HERMES_LOG_LINES:-30}; PRS=${HERMES_PR_LIMIT:-8}

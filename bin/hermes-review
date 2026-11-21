@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # hermes-review — reviewer agent for Hermes PRs in the CURRENT repo (or $HERMES_REPO).
 #
-# Usage: cd /path/to/target-repo && hermes-review [--dry-run] [--skip-agent] [--watch SECONDS] [--pr N]
+# Usage: hermes-review [--dry-run] [--skip-agent] [--watch SECONDS] [--pr N]
 #   --dry-run      print what it would do; comment, merge, close and create nothing
 #   --skip-agent   no model call (only with --dry-run): identification + checks only
 #   --agent A      ollama (default: the local model Hermes uses) or claude (claude -p)
 #   --model M      reviewer model (default for ollama: model.default in ~/.hermes/config.yaml)
 #   --watch N      keep polling every N seconds
 #   --pr N         only this PR
+#   -h, --help     show this help and exit (needs no repo)
+# Run from the target repo, or set HERMES_REPO.
 #
 # For each open, non-draft PR on a bd/<id> branch: verify the bead id (branch, title
 # "type(<id>):", body "Bead: <id>") and that the bead is in_progress with the PR link;
@@ -31,7 +33,7 @@ HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
 
-case "${1:-}" in -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 
 hh_repo || exit 2
 cd "$REPO_ROOT" || exit 2

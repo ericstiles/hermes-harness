@@ -2,7 +2,8 @@
 # hermes-setup — copy the harness's baseline files into a target repo, or check them.
 #
 # Usage: hermes-setup [--check] <target-repo>
-#   --check   write nothing; print what would change and exit 1 if anything would.
+#   --check     write nothing; print what would change and exit 1 if anything would.
+#   -h, --help  show this help and exit
 #
 # Files (paths relative to the target repo's top level):
 #   AGENTS.md        managed: always an identical copy of this harness's AGENTS.md.
@@ -24,7 +25,7 @@ BEGIN_MARK="<!-- BEGIN HERMES-HARNESS (managed by hermes-setup; edits inside are
 END_MARK="<!-- END HERMES-HARNESS -->"
 IGNORE_LINES=("logs/" ".envrc.local")
 
-usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; }
 die() { echo "hermes-setup: $*" >&2; exit 2; }
 
 CHECK=0; TARGET=""

@@ -19,7 +19,7 @@ usage() {
   cat <<'EOF'
 hermes-launch - start an unattended Hermes run over the current repo's beads queue
 
-Usage:
+Usage: hermes-launch [options]
   cd /path/to/target-repo && hermes-launch [options]
   HERMES_REPO=/path/to/target-repo hermes-launch [options]
 

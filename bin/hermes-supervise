@@ -2,10 +2,11 @@
 # hermes-supervise — READ-ONLY diagnosis of the newest Hermes run in the CURRENT repo, with the
 # recommended next action. Claude Code runs this, then acts on the action.
 #
-# Usage:
+# Usage: hermes-supervise [<logfile> | --classify <logfile>]     (run from the target repo)
 #   hermes-supervise                 diagnose newest log in $HERMES_LOG_DIR (default <repo>/logs)
 #   hermes-supervise <logfile>       diagnose a specific log
 #   hermes-supervise --classify <f>  print only the class name
+#   -h, --help                       show this help and exit (needs no repo)
 #
 # Output (parseable): CLASS=..., ISSUE=..., ACTION=<AUTO_RELAUNCH|WAIT|DONE|ASK_HUMAN>,
 # NEXT=<exact command to run>, then evidence lines.
@@ -34,6 +35,7 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 # shellcheck source=../lib/classify.sh
 . "$HARNESS_HOME/lib/classify.sh"
 # shellcheck source=../lib/wrapup.sh

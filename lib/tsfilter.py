@@ -167,7 +167,16 @@ def parse_args(argv: List[str]) -> Optional[str]:
     return log_path
 
 
+USAGE = """Usage: tsfilter.py [--log FILE] < STREAM
+  --log FILE   also write each timestamped line to FILE (hermes-run: run-<stamp>.timed.txt)
+  -h, --help   show this help and exit
+"""
+
+
 def main(argv: List[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        print(USAGE + "\n" + (__doc__ or ""))
+        return 0
     log_path = parse_args(argv)
     sinks = [Sink(sys.stdout.buffer, "stdout", is_stdout=True), open_log(log_path)]
     try:

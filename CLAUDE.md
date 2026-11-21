@@ -2,6 +2,8 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+Project-specific agent rules: @AGENTS_LOCAL.md
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->
 ## Beads Issue Tracker
 

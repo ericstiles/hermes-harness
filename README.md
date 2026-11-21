@@ -87,7 +87,9 @@ Symlinks onto PATH also work. Check with `which hermes-launch`.
 
 ## Per target repo
 1. `.beads/` with a Dolt remote (`bd init`), so the sandbox can pull and push issues.
-2. `AGENTS.md`: paste `templates/AGENTS_WORKFLOW.md` and fill in test/lint commands.
+2. `AGENTS.md`: copy this repo's `AGENTS.md` unchanged (it is shared and identical
+   in every target repo). Put the repo's own rules (quality gate, stack,
+   environment variables) in a new `AGENTS_LOCAL.md`, which `AGENTS.md` tells agents to read.
 3. `.envrc.local` (git-ignored): `export GH_TOKEN=...` (fine-grained, that repo only); `direnv allow`.
 4. Git-ignore `logs/` (run logs, lock and relaunch counters live there).
 5. Optional: paste `templates/CLAUDE_SNIPPET.md` into `CLAUDE.md`, and allow

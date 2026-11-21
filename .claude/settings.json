@@ -23,7 +23,12 @@
       "Bash(git push * -f*)",
       "Bash(git push * --force*)",
       "Bash(git push *+*)",
-      "Bash(gh pr merge*)"
+      "Bash(gh pr merge *--admin*)",
+      "Bash(gh pr merge *--squash*)",
+      "Bash(gh pr merge *--merge*)",
+      "Bash(gh pr merge *--auto*)",
+      "Bash(gh pr merge * -s*)",
+      "Bash(gh pr merge * -m*)"
     ]
   },
   "hooks": {

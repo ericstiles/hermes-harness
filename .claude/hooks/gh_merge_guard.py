@@ -15,7 +15,9 @@ word `merge`, not necessarily adjacent (`gh pr -R o/r merge 5`), or by `api` and
 VAR=value prefix, inside $(...) or backticks).
 A command that mentions gh and the whole word `merge` is blocked if ANY of its segments
 invokes a shell (bash/sh/zsh/eval/source/. ...): the merge can hide in a quoted word or
-come from another segment (`echo '... merge ...' | sh`, `source <(...)`). Unbalanced
+come from another segment (`echo '... merge ...' | sh`, `source <(...)`). The same goes
+for a segment that builds a command from text: `xargs` (words from stdin) and `env -S` /
+`--split-string` (a string split into words). Unbalanced
 quotes in a command that mentions gh and the word merge are blocked. shlex does not
 expand `$x`, `$'...'`, `$(...)` or backticks, so in a command that mentions gh and the
 whole word merge, a segment that runs gh (or starts with an expansion such as `$G`) and
@@ -141,7 +143,23 @@ def is_allowed(command: str) -> bool:
     # another segment (`echo '... merge ...' | sh`, `source <(...)`): block it.
     if any(word.rsplit("/", 1)[-1] in SHELLS for words in segments for word in words):
         return False
+    if any(_builds_command(words) for words in segments):
+        return False
     return all(segment_allowed(words) for words in segments)
+
+
+def _builds_command(words: list[str]) -> bool:
+    """True for a segment that assembles a command from text, like a shell does:
+    `xargs` (adds words read from stdin) or `env -S` / `--split-string` (splits a string)."""
+    for i, word in enumerate(words):
+        name = word.rsplit("/", 1)[-1]
+        if name == "xargs":
+            return True
+        if name == "env" and any(
+            arg.startswith("-S") or arg.startswith("--split-string") for arg in words[i + 1 :]
+        ):
+            return True
+    return False
 
 
 def command_from(raw: str) -> str | None:

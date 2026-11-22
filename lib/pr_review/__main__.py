@@ -16,7 +16,7 @@ from pathlib import Path
 from pr_review import local_agent
 from pr_review.checks import ConfigError, load_config
 from pr_review.progress import fmt_duration
-from pr_review.review import Context, review_pr
+from pr_review.review import Context, refused_lines, review_pr
 from pr_review.services import Beads, GitHub
 from pr_review.shell import CommandError, run
 from pr_review.verdict import MARKER_PREFIX
@@ -53,6 +53,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-agent", action="store_true", help="no model call (needs --dry-run)")
     p.add_argument("--watch", type=int, default=0, metavar="SECONDS", help="poll interval")
     p.add_argument("--pr", type=int, default=None, help="only this PR number")
+    p.add_argument(
+        "--list-refused",
+        action="store_true",
+        help="print open bd/* PRs refused at their current head, then exit (read-only)",
+    )
     p.add_argument(
         "--agent",
         choices=("ollama", "claude"),
@@ -119,6 +124,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None) -> int:
     args = _parser().parse_args(argv)
+    if args.list_refused:  # read-only; needs no model and no config
+        try:
+            lines = refused_lines(GitHub(run))
+        except (CommandError, ValueError) as exc:
+            print(f"unavailable: {exc}")
+            return 1
+        print("\n".join(lines) if lines else "no refused PRs")
+        return 0
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", stream=sys.stdout)
     if args.skip_agent and not args.dry_run:
         log.error("--skip-agent is only allowed with --dry-run")

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # hermes-review — reviewer agent for Hermes PRs in the CURRENT repo (or $HERMES_REPO).
 #
-# Usage: hermes-review [--dry-run] [--skip-agent] [--watch SECONDS] [--pr N]
+# Usage: hermes-review [--dry-run] [--skip-agent] [--watch SECONDS] [--pr N] [--list-refused]
 #   --dry-run      print what it would do; comment, merge, close and create nothing
 #   --skip-agent   no model call (only with --dry-run): identification + checks only
 #   --agent A      ollama (default: the local model Hermes uses) or claude (claude -p)
 #   --model M      reviewer model (default for ollama: model.default in ~/.hermes/config.yaml)
 #   --watch N      keep polling every N seconds
 #   --pr N         only this PR
+#   --list-refused print open bd/* PRs refused at their current commit, then exit (read-only)
 #   -h, --help     show this help and exit (needs no repo)
 # Run from the target repo, or set HERMES_REPO.
 #

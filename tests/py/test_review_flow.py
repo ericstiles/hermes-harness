@@ -333,3 +333,28 @@ def test_dry_run_closes_no_epics(verdict: list[Verdict]) -> None:
     bd = FakeBeads(eligible=["om-e"])
     review.review_pr(_ctx(FakeGitHub(), bd, dry_run=True), PR)
     assert ("epics", 7) not in bd.calls
+
+
+# --- bead hermes-harness-gbd: a refusal is announced once per head commit and reason ---
+
+
+def test_refusal_notifies_once_per_head_and_reason(verdict: list[Verdict]) -> None:
+    from dataclasses import replace
+
+    gh, bd = FakeGitHub(), FakeBeads(notes="")
+    first = _ctx(gh, bd)
+    assert review.review_pr(first, PR) == "refused"
+    assert len(first.notified) == 1  # type: ignore[attr-defined]
+    assert "PR #7" in first.notified[0]  # type: ignore[attr-defined]
+    again = _ctx(gh, bd)
+    assert review.review_pr(again, PR) == "refused"
+    assert again.notified == []  # type: ignore[attr-defined]  # same head and reason: silent
+    new_head = _ctx(gh, bd)
+    assert review.review_pr(new_head, replace(PR, head_sha="sha8")) == "refused"
+    assert len(new_head.notified) == 1  # type: ignore[attr-defined]
+
+
+def test_dry_run_refusal_does_not_notify(verdict: list[Verdict]) -> None:
+    ctx = _ctx(FakeGitHub(), FakeBeads(notes=""), dry_run=True)
+    assert review.review_pr(ctx, PR) == "refused"
+    assert ctx.notified == []  # type: ignore[attr-defined]

@@ -30,6 +30,8 @@
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
 #   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
+#   HERMES_CONTEXT_WINDOW=N      context window for the CONTEXT: line (default: looked up from Hermes
+#                                config, its context_length_cache, then Ollama; never guessed)
 #   HERMES_STALL_WARN=10m        print "no output for 10m (last: HH:MM:SS)" to the terminal and
 #                                the timed log (never the raw log) after this much silence,
 #                                again each further interval; 0 = off
@@ -219,10 +221,15 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   fi
   rm -f "$tee_err"
   # Why Hermes stopped (agent.log "Turn ended"), before RUN_RESULT so the classifier can use it.
-  local stop_line; stop_line="STOP_REASON: $(hh_stop_reason "$(run_session)")"
+  local sid stop_line ctx_line; sid=$(run_session)
+  stop_line="STOP_REASON: $(hh_stop_reason "$sid")"
   echo "$stop_line" | tee -a "$log"
   hh_stamp_line "$stop_line" >> "$timed" 2>/dev/null || true
   class=$(hermes_classify "$log" "$status")
+  # Token usage AFTER classification (it cannot affect the class) and before RUN_RESULT (last).
+  ctx_line=$(context_line "$sid")
+  echo "$ctx_line" | tee -a "$log"
+  hh_stamp_line "$ctx_line" >> "$timed" 2>/dev/null || true
   echo "RUN_RESULT=$class" | tee -a "$log"
   issue=$(claimed_issue "$log")
   RUN_TIME_LINE="RUN_TIME start=$(hh_hms "$start") end=$(hh_hms "$end") elapsed=$(hh_elapsed $((end - start))) issue=${issue:-unknown}"
@@ -248,6 +255,26 @@ notes_check() {
 # The session of the run that just ended: its footer, else (killed or crashed, no footer) the
 # harness session that started with it in Hermes' store.
 run_session() { local s; s=$(session_id "$log"); [ -n "$s" ] || s=$(hh_find_session "$run_start"); printf '%s' "$s"; }
+
+# One "CONTEXT: ..." line with the session's token usage (lib/context_usage.py): cumulative
+# counts, no %, since Hermes keeps no per-call prompt size. The export is piped, never written
+# to disk. Always exactly one CONTEXT: line and exit 0: it must never change a run's result.
+context_line() { # <session-id>
+  local out
+  if [ -z "$1" ]; then
+    echo "CONTEXT: unavailable (no session found: no Session: footer and no harness session in hermes sessions list)"
+    return 0
+  fi
+  # shellcheck disable=SC2086  # the optional --window pair is intentionally word-split
+  out=$(hermes sessions export --session-id "$1" - 2>/dev/null \
+        | python3 "$HARNESS_HOME/lib/context_usage.py" ${HERMES_CONTEXT_WINDOW:+--window $HERMES_CONTEXT_WINDOW} 2>/dev/null \
+        | head -n 1)
+  case $out in
+    "CONTEXT: "*) printf '%s\n' "$out" ;;
+    *) echo "CONTEXT: unavailable (context_usage.py printed no CONTEXT line)" ;;
+  esac
+  return 0
+}
 
 # A TIMEOUT, AGENT_CRASHED or TURN_LIMIT run leaves no PR. Resume its session for a short wrap-up that pushes
 # WIP and appends a "WIP:" note (lib/wrapup.sh), so the next run starts from it, not from zero.

@@ -5,11 +5,15 @@
 only_log() { ls "$W"/logs/run-*.log; }
 only_timed() { ls "$W"/logs/run-*.timed.txt 2>/dev/null; }
 
-# every classifier fixture, run through hermes-run: raw log = fixture + STOP_REASON + exactly one
+# every classifier fixture, run through hermes-run: raw log = CONTEXT: baseline line (39w.3) + fixture
+# + STOP_REASON + exactly one
 # CONTEXT: line (39w.2) + RUN_RESULT (STOP_REASON is "unknown": run_tests.sh points HERMES_AGENT_LOG
 # at a file that does not exist; the CONTEXT text depends on the fixture, so it is copied)
 ctx_of() { # <raw log> -> its single CONTEXT: line, or a marker that makes cmp fail
-  [ "$(grep -c '^CONTEXT: ' "$1")" = 1 ] && grep '^CONTEXT: ' "$1" || echo "<not exactly one CONTEXT: line>"
+  [ "$(grep -c '^CONTEXT: [^b]' "$1")" = 1 ] && grep '^CONTEXT: [^b]' "$1" || echo "<not exactly one CONTEXT: line>"
+}
+base_of() { # <raw log> -> its first line if it is the CONTEXT: baseline line (39w.3), else a marker
+  head -n 1 "$1" | grep '^CONTEXT: baseline ' || echo "<no CONTEXT: baseline first line>"
 }
 same=yes; diffs=""
 for pair in timeout_killed:TIMEOUT blocked:BLOCKED queue_empty:QUEUE_EMPTY model_api_error:MODEL_API_ERROR \
@@ -17,7 +21,7 @@ for pair in timeout_killed:TIMEOUT blocked:BLOCKED queue_empty:QUEUE_EMPTY model
             trap_test_404_and_aux_timeout:OK_DONE trap_sentinel_in_prose:OK_DONE trap_sync_in_prose:OK_DONE; do
   n=${pair%%:*}; want=${pair##*:}; rm -rf "$W/logs"
   STUB_FIXTURE="$FX/$n.log" runit "$BIN/hermes-run" 1 >/dev/null 2>&1
-  { cat "$FX/$n.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=$want"; } > "$tmp/want_raw"
+  { base_of "$(only_log)"; cat "$FX/$n.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=$want"; } > "$tmp/want_raw"
   cmp -s "$tmp/want_raw" "$(only_log)" || { same=no; diffs="$diffs $n"; }
 done
 eq "timestamps: raw run log still classifies exactly as before (11 fixtures)" "$same" "yes${diffs:+ ($diffs)}"
@@ -53,7 +57,7 @@ rm -rf "$W/logs"; mkdir -p "$tmp/deadpy"
 printf '#!/bin/sh\ncase "$*" in *tsfilter.py*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "$tmp/deadpy/python3"; chmod +x "$tmp/deadpy/python3"
 { seq 1 20000 | sed 's/^/filler line /'; tail -n 8 "$FX/ok_done.log"; } > "$tmp/big.log"
 out=$(PATH="$tmp/deadpy:$PATH" STUB_FIXTURE="$tmp/big.log" runit "$BIN/hermes-run" 1 2>&1); rc=$?
-{ cat "$tmp/big.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=OK_DONE"; } > "$tmp/want_big"
+{ base_of "$(only_log)"; cat "$tmp/big.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=OK_DONE"; } > "$tmp/want_big"
 [ $rc -eq 0 ] && cmp -s "$tmp/want_big" "$(only_log)" && say "$out" | grep -q 'timestamp filter' \
   && ok "timestamps: a dead filter leaves the raw log complete and warns" || bad "timestamps: dead filter" "$rc $(wc -l < "$(only_log)") $(echo "$out" | tail -3)"
 # BSD tee with SIGPIPE ignored prints "Broken pipe" per write; that must not flood the terminal

@@ -24,7 +24,7 @@ grep -q '^hermes sessions export --session-id 20261121_120000_aaa111 -$' "$STUB_
 say "$out" | grep -q "^$want " && ok "context: CONTEXT line is shown on the terminal" || bad "context: terminal" "$out"
 grep -q "\] $want " "$W"/logs/run-*.timed.txt && ok "context: CONTEXT line is in the timed log" || bad "context: timed log" "$(grep CONTEXT "$W"/logs/run-*.timed.txt)"
 eq "context: a finished run still exits 0 and classifies OK_DONE" "$rc|$(tail -n 1 "$log")" "0|RUN_RESULT=OK_DONE"
-c=$(line_no "$log" '^CONTEXT: '); r=$(line_no "$log" '^RUN_RESULT=')
+c=$(line_no "$log" '^CONTEXT: [^b]'); r=$(line_no "$log" '^RUN_RESULT=')
 [ -n "$c" ] && [ -n "$r" ] && [ "$c" -lt "$r" ] && [ "$(grep -c '^RUN_RESULT=' "$log")" = 1 ] \
   && ok "context: CONTEXT lines come before RUN_RESULT in the log" || bad "context: order" "CONTEXT@$c RUN_RESULT@$r"
 leak=$(grep -rl "$CTX_SECRET" "$W" "$tmp/ctx-tmpdir" 2>/dev/null)
@@ -56,7 +56,7 @@ began=$(date +%s)
 out=$(STUB_SID=20261121_120000_aaa111 STUB_EXPORT_HANG=1 HERMES_CONTEXT_TIMEOUT=1s runit "$BIN/hermes-run" 1 2>&1); rc=$?
 took=$(( $(date +%s) - began )); log=$(ctx_log)
 eq "context: a hung export times out with one unavailable line and the run result is unchanged" \
-  "$rc|$(grep -c '^CONTEXT: ' "$log")|$(grep '^CONTEXT: ' "$log")|$(tail -n 1 "$log")" \
+  "$rc|$(grep -c '^CONTEXT: [^b]' "$log")|$(grep '^CONTEXT: [^b]' "$log")|$(tail -n 1 "$log")" \
   "0|1|CONTEXT: unavailable (export timed out after 1s)|RUN_RESULT=OK_DONE"
 [ "$took" -lt 20 ] && ok "context: a hung export does not hold up the loop (${took}s)" \
   || bad "context: a hung export does not hold up the loop" "${took}s"
@@ -68,7 +68,7 @@ rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"; echo 'not json' > "$tmp/
 out=$(STUB_SID=20261121_120000_aaa111 STUB_EXPORT="$tmp/ctx-bad.json" runit "$BIN/hermes-run" 1 2>&1); rc=$?
 log=$(ctx_log)
 eq "context: a broken export logs one 'unavailable' line and the run still exits 0" \
-  "$rc|$(grep -c '^CONTEXT: ' "$log")|$(grep '^CONTEXT: ' "$log")" "0|1|CONTEXT: unavailable (not JSON)"
+  "$rc|$(grep -c '^CONTEXT: [^b]' "$log")|$(grep '^CONTEXT: [^b]' "$log")" "0|1|CONTEXT: unavailable (not JSON)"
 
 # --- the classifier ignores CONTEXT lines (all 11 fixtures, both line kinds appended) ---
 same=0; total=0
@@ -81,4 +81,41 @@ for f in timeout_killed blocked queue_empty model_api_error beads_sync auth_erro
   done
 done
 eq "context: all 11 classifier fixtures classify identically with CONTEXT: lines appended" "$same" "$total"
+
+# --- baseline at run start: `hermes prompt-size --json` in the repo root -> first raw-log line (39w.3) ---
+CTX_BASE='CONTEXT: baseline system_prompt=100 chars tools=3 (900 B schema) memory=10 skills_index=20 context_files=30 (chars and bytes; Hermes reports no token count)'
+printf '{\n "system_prompt": {"chars": 100, "bytes": 101},\n "skills_index": {"chars": 20, "bytes": 20},\n "memory": {"chars": 10, "bytes": 10},\n "tools": {"count": 3, "json_bytes": 900},\n "sections": [["stable", 1, 1], ["context (AGENTS.md/cwd files)", 30, 30]]\n}\n' > "$tmp/ctx-ps.json"
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
+out=$(STUB_PROMPT_SIZE="$tmp/ctx-ps.json" runit "$BIN/hermes-run" 1 2>&1); rc=$?
+log=$(ctx_log)
+eq "context: baseline line comes from 'hermes prompt-size --json' at the start of the run" \
+  "$(head -n 1 "$log")|$(grep -c '^hermes prompt-size --json$' "$STUB_LOG")|$(grep '^prompt-size cwd=' "$STUB_LOG")" \
+  "$CTX_BASE|1|prompt-size cwd=$W"
+say "$out" | grep -qF "$CTX_BASE" && grep -qF "] $CTX_BASE" "$W"/logs/run-*.timed.txt \
+  && ok "context: baseline line is on the terminal and in the timed log" || bad "context: baseline terminal/timed" "$out"
+[ "$(grep -n '^  ┊' "$log" | head -n 1 | cut -d: -f1)" -gt 1 ] && [ "$rc" = 0 ] \
+  && ok "context: baseline line is above Hermes output and the run still exits 0" || bad "context: baseline position" "$rc $(head -n 3 "$log")"
+
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
+out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
+log=$(ctx_log)
+eq "context: baseline failure prints 'baseline unavailable' and the run continues" \
+  "$rc|$(head -n 1 "$log")|$(tail -n 1 "$log")" "0|CONTEXT: baseline unavailable (empty input)|RUN_RESULT=OK_DONE"
+
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"; began=$(date +%s)
+out=$(STUB_PROMPT_SIZE_HANG=1 HERMES_BASELINE_TIMEOUT=1s runit "$BIN/hermes-run" 1 2>&1); rc=$?
+took=$(( $(date +%s) - began )); log=$(ctx_log)
+eq "context: a hung prompt-size is stopped and the run continues" \
+  "$rc|$(head -n 1 "$log")|$(tail -n 1 "$log")" "0|CONTEXT: baseline unavailable (hermes prompt-size timed out after 1s)|RUN_RESULT=OK_DONE"
+[ "$took" -lt 20 ] && ok "context: a hung prompt-size does not hold up the run (${took}s)" || bad "context: prompt-size hang" "${took}s"
+
+same=0; total=0
+for f in timeout_killed blocked queue_empty model_api_error beads_sync auth_error sandbox_down ok_done \
+         trap_test_404_and_aux_timeout trap_sentinel_in_prose trap_sync_in_prose; do
+  for first in "$CTX_BASE" "CONTEXT: baseline unavailable (hermes prompt-size timed out after 15s)"; do
+    total=$((total + 1)); { echo "$first"; cat "$FX/$f.log"; } > "$tmp/ctx-fx.log"
+    [ "$(hermes_classify "$FX/$f.log")" = "$(hermes_classify "$tmp/ctx-fx.log")" ] && same=$((same + 1))
+  done
+done
+eq "context: all 11 classifier fixtures classify identically with a baseline line first" "$same" "$total"
 rm -rf "$W/logs" "$tmp"/ctx-*

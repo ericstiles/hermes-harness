@@ -57,6 +57,8 @@ LOOKUP_ERRORS = (
     subprocess.SubprocessError, http.client.HTTPException,
 )  # fmt: skip
 USAGE = """usage: context_usage.py [--window N] [--model M] < SESSION_EXPORT_JSON
+       context_usage.py --baseline < PROMPT_SIZE_JSON   (hermes prompt-size --json)
+  --baseline   print the fixed prompt budget of a fresh session (chars/bytes, not tokens)
   --window N   context window in tokens (otherwise looked up; never guessed)
   --model M    model name for the window lookup (default: the export's model)
   -h, --help   show this help and exit
@@ -104,6 +106,70 @@ def parse_export(text: str) -> Usage:
     model = record.get("model")
     safe = model if isinstance(model, str) and SAFE_MODEL.fullmatch(model) else "unknown"
     return Usage(model=safe, **counts)
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """The fixed prompt budget of a fresh session, from `hermes prompt-size --json`.
+
+    Hermes reports characters and bytes here, not tokens; no tokenizer count exists."""
+
+    system_prompt: int
+    tools: int
+    tools_bytes: int
+    memory: int
+    skills_index: int
+    context_files: int
+
+
+def _field(record: dict[str, object], path: str) -> int:
+    value: object = record
+    for key in path.split("."):
+        value = value.get(key) if isinstance(value, dict) else None
+    if value is None:
+        raise ValueError(f"{path} is missing")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{path} is not a non-negative integer")
+    return value
+
+
+def _context_files(record: dict[str, object]) -> int:
+    """Chars of the `context (AGENTS.md/cwd files)` section ([name, chars, bytes])."""
+    sections = record.get("sections")
+    for section in sections if isinstance(sections, list) else []:
+        if isinstance(section, list) and section and str(section[0]).startswith("context"):
+            return _field({"context": {"chars": section[1] if len(section) > 1 else None}},
+                          "context.chars")  # fmt: skip
+    raise ValueError("no context section")
+
+
+def parse_prompt_size(text: str) -> Baseline:
+    """Baseline from the whole `hermes prompt-size --json` output (pretty-printed JSON)."""
+    if not text.strip():
+        raise ValueError("empty input")
+    try:
+        record = json.loads(text)
+    except ValueError:
+        raise ValueError("not JSON") from None
+    if not isinstance(record, dict):
+        raise ValueError("not a JSON object")
+    return Baseline(
+        system_prompt=_field(record, "system_prompt.chars"),
+        tools=_field(record, "tools.count"),
+        tools_bytes=_field(record, "tools.json_bytes"),
+        memory=_field(record, "memory.chars"),
+        skills_index=_field(record, "skills_index.chars"),
+        context_files=_context_files(record),
+    )
+
+
+def baseline_line(baseline: Baseline) -> str:
+    return (
+        f"{PREFIX} baseline system_prompt={baseline.system_prompt} chars "
+        f"tools={baseline.tools} ({baseline.tools_bytes} B schema) memory={baseline.memory} "
+        f"skills_index={baseline.skills_index} context_files={baseline.context_files} "
+        "(chars and bytes; Hermes reports no token count)"
+    )
 
 
 def _positive(text: str | None) -> int | None:
@@ -208,7 +274,19 @@ def _arg(argv: list[str], name: str) -> str | None:
     return None
 
 
+def main_baseline(stdin: TextIO, stdout: TextIO) -> int:
+    try:
+        stdout.write(baseline_line(parse_prompt_size(stdin.read())) + "\n")
+    except UnicodeDecodeError:
+        stdout.write(f"{PREFIX} baseline unavailable (not UTF-8)\n")
+    except ValueError as exc:
+        stdout.write(f"{PREFIX} baseline unavailable ({exc})\n")
+    return 0
+
+
 def main(argv: list[str], stdin: TextIO, stdout: TextIO, environ: dict[str, str]) -> int:
+    if "--baseline" in argv:
+        return main_baseline(stdin, stdout)
     try:
         usage = parse_export(stdin.read())
     except UnicodeDecodeError:  # its message quotes input bytes: use a fixed reason

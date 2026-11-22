@@ -24,7 +24,9 @@ Anything else exits 2: Claude Code refuses the command and shows the reason.
 Allowed: a merge mentioned inside ONE quoted word (git commit -m '...', bd note '...',
 python3 -c '...'), and words like `mergeable` (`gh pr view --json mergeable`).
 Blocked: an unquoted mention (`echo gh pr merge -s 0`).
-Not covered: gh aliases (`gh alias set`) that expand to a merge.
+Not covered: gh aliases (`gh alias set`) that expand to a merge, and a merge run from
+inside another interpreter (`python3 -c "os.system('gh pr merge 5 -s')"`, node, ...):
+only shells (bash/sh/zsh/eval ...) are treated as hiding a merge in a string.
 
 This hook is BEST-EFFORT: matching text cannot fully model the shell (e.g. a merge
 built from pieces that never spell `merge`, or a gh alias). The real enforcement is the
@@ -122,6 +124,10 @@ def _mentions_merge(text: str) -> bool:
 
 
 def is_allowed(command: str) -> bool:
+    # Bash deletes backslash-newline (line continuation) before splitting words, so
+    # `me\<newline>rge` is `merge`. Removing it everywhere (even inside single quotes,
+    # where bash keeps it) can only make more commands look like merges: fails safe.
+    command = command.replace("\\\n", "")
     tokens = _tokens(command)
     if tokens is None:  # unbalanced quotes: judge the raw text, fail closed
         return not _mentions_merge(command)

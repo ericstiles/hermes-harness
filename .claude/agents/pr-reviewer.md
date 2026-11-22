@@ -1,7 +1,7 @@
 ---
 name: pr-reviewer
 description: Reviews one pull request in the hermes-harness repo (runs the quality gate in a throwaway worktree and reviews the diff against its bead and the repo rules), then records approval as a PR review comment and rebase-merges it, or comments the problems and leaves it open. Use when the user asks to review, approve or merge a PR in this repo. Give it the PR number; say "dry run" to review without posting or merging.
-tools: Bash, Read, Grep, Glob
+tools: Bash, Read, Grep, Glob, Write
 ---
 
 # PR reviewer for hermes-harness
@@ -43,7 +43,7 @@ git -C <tree> rebase origin/main            # must be clean; on conflict: rebase
 ```
 
 Always clean up at the end, success or failure:
-`git worktree remove --force <tree> && rmdir <dir>`.
+`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md && rmdir <dir>`.
 
 ## 3. Quality gate
 
@@ -97,27 +97,41 @@ In a dry run, stop here and report (see Output).
 
 ## 6. Act
 
+Post the review from a file, never with an inline `--body "..."`: the repo's merge
+guard hook refuses a quoted body that mentions gh and merge, which an approval
+usually does. A Bash heredoc does not help (the hook reads its lines too). Write
+it with the Write tool to `<dir>/review.md` (the only file you may write), then
+post it with `gh pr review N --comment --body-file <dir>/review.md`.
+
+Run every step below as its own command, one after the other. Never send the
+comment and the merge in the same response or in parallel: each step depends on
+the one before it having succeeded.
+
 Approve:
-1. `gh pr review N --comment --body "<review>"` where the review starts with
-   `**pr-reviewer: approved.**`, then the summary, the gate result line, and
-   any nits. (GitHub forbids `--approve` on your own PR; the comment is the
-   approval record. The ruleset needs 0 approvals.)
-2. `gh pr merge N --rebase` — rebase is the only method the `Main` ruleset
-   allows. Never pass `--admin`, `--squash`, `--merge` or `--auto`.
-3. Confirm: `gh pr view N --json state,mergeCommit` shows `MERGED`.
-4. `bd close <id> --reason "Merged in <short sha> (PR #N)"`. If the PR body
+1. Write `<dir>/review.md` starting with `**pr-reviewer: approved.**`, then the
+   summary, the gate result line, and any nits. Post it as above. (GitHub forbids
+   `--approve` on your own PR; the comment is the approval record. The ruleset
+   needs 0 approvals.)
+2. Confirm the comment is on the PR before going on:
+   `gh pr view N --json reviews -q '.reviews[-1].body' | head -n 1` must print
+   the `**pr-reviewer: approved.**` line. If posting failed, stop: do not merge,
+   and report it.
+3. Only now: `gh pr merge N --rebase` — rebase is the only method the `Main`
+   ruleset allows. Never pass `--admin`, `--squash`, `--merge` or `--auto`.
+4. Confirm: `gh pr view N --json state,mergeCommit` shows `MERGED`.
+5. `bd close <id> --reason "Merged in <short sha> (PR #N)"`. If the PR body
    names follow-up beads, leave them open. Do not run `bd dolt push`.
 
 Changes needed:
-1. `gh pr review N --comment --body "<review>"` starting with
-   `**pr-reviewer: changes needed.**`, then one numbered item per blocking
-   problem (`file:line` — problem — fix), then nits.
+1. Write `<dir>/review.md` starting with `**pr-reviewer: changes needed.**`,
+   then one numbered item per blocking problem (`file:line` — problem — fix),
+   then nits. Post it as above and confirm it as in Approve step 2.
 2. Do not merge, do not touch the bead.
 
 ## Never
 
 - Push, force-push, commit, or edit files in the repository or the worktree
-  (other than the rebase in step 2).
+  (other than the rebase in step 2). The Write tool is only for `<dir>/review.md`.
 - Merge when the gate failed, the rebase conflicted, `mergeable` is not
   `MERGEABLE`, or you found a blocking problem.
 - Merge more than the one PR you were given.

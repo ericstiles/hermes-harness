@@ -165,8 +165,10 @@ cat > "$tmp/bin/hermes" <<'S'
 echo "hermes $*" >> "$STUB_LOG"
 # sessions list: STUB_SESSIONS=1 shows a harness session started now, plus an older harness
 # session and a newer-sorting unrelated chat that must both be ignored
-# sessions export: prints $STUB_EXPORT (a canned `hermes sessions export` JSON line) if set
+# sessions export: prints $STUB_EXPORT (a canned `hermes sessions export` JSON line) if set;
+# STUB_EXPORT_HANG=1 hangs instead (a stuck Hermes CLI)
 if [ "$1 $2" = "sessions export" ]; then
+  [ "${STUB_EXPORT_HANG:-0}" = 1 ] && { sleep 60; exit 0; }
   [ -n "$STUB_EXPORT" ] && cat "$STUB_EXPORT"
   exit 0
 fi

@@ -50,6 +50,19 @@ grep -qE '^hermes sessions export --session-id [0-9]{8}_[0-9]{6}_abc123 -$' "$ST
   && grep -q "^$want " "$log" && ok "context: killed run exports the harness session that started with it" \
   || bad "context: killed run session" "$(grep sessions "$STUB_LOG") / $(grep CONTEXT "$log")"
 
+# --- export hangs (stuck Hermes CLI): stopped at HERMES_CONTEXT_TIMEOUT, run unchanged (bead 8qn) ---
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
+began=$(date +%s)
+out=$(STUB_SID=20261121_120000_aaa111 STUB_EXPORT_HANG=1 HERMES_CONTEXT_TIMEOUT=1s runit "$BIN/hermes-run" 1 2>&1); rc=$?
+took=$(( $(date +%s) - began )); log=$(ctx_log)
+eq "context: a hung export times out with one unavailable line and the run result is unchanged" \
+  "$rc|$(grep -c '^CONTEXT: ' "$log")|$(grep '^CONTEXT: ' "$log")|$(tail -n 1 "$log")" \
+  "0|1|CONTEXT: unavailable (export timed out after 1s)|RUN_RESULT=OK_DONE"
+[ "$took" -lt 20 ] && ok "context: a hung export does not hold up the loop (${took}s)" \
+  || bad "context: a hung export does not hold up the loop" "${took}s"
+grep -q '^WATCHDOG: ' "$log" && bad "context: the export's watchdog note stays out of the raw log" "$(grep '^WATCHDOG: ' "$log")" \
+  || ok "context: the export's watchdog note stays out of the raw log"
+
 # --- export broken (empty or garbage): one unavailable line, run unchanged ---
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"; echo 'not json' > "$tmp/ctx-bad.json"
 out=$(STUB_SID=20261121_120000_aaa111 STUB_EXPORT="$tmp/ctx-bad.json" runit "$BIN/hermes-run" 1 2>&1); rc=$?

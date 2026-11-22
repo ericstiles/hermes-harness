@@ -45,12 +45,14 @@ class FakeBeads:
         fixes: list[dict[str, object]] | None = None,
         labels: list[str] | None = None,
         others: list[dict[str, object]] | None = None,
+        eligible: list[str] | None = None,
     ) -> None:
         self.info: dict[str, object] = {
             "status": status, "notes": notes, "priority": 2, "labels": labels or [],
         }  # fmt: skip
         self.fixes = fixes or []
         self.others = others or []
+        self.eligible = eligible or []
         self.calls: list[tuple[str, object]] = []
 
     def show(self, bead: str) -> dict[str, object]:
@@ -78,6 +80,10 @@ class FakeBeads:
     def escalate(self, bead: str, text: str) -> None:
         self.calls.append(("escalate", bead))
 
+    def close_eligible_epics(self, pr: PullRequest) -> list[str]:
+        self.calls.append(("epics", pr.number))
+        return self.eligible
+
     def push(self) -> None:
         self.calls.append(("push", None))
 
@@ -101,7 +107,7 @@ def test_good_pr_is_approved_merged_and_closed(verdict: list[Verdict]) -> None:
     gh, bd = FakeGitHub(), FakeBeads()
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
     assert gh.calls == [("review", True), ("merge", 7)]
-    assert bd.calls == [("close", "om-1"), ("push", None)]
+    assert bd.calls == [("close", "om-1"), ("epics", 7), ("push", None)]
 
 
 def test_merge_closes_the_ticket_and_its_open_review_fixes_only(
@@ -113,14 +119,16 @@ def test_merge_closes_the_ticket_and_its_open_review_fixes_only(
     ]
     gh, bd = FakeGitHub(), FakeBeads(fixes=fixes)
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
-    assert bd.calls == [("close", "om-1"), ("close", "om-f2"), ("push", None)]
+    assert bd.calls == [("close", "om-1"), ("close", "om-f2"), ("epics", 7), ("push", None)]
 
 
 def test_merge_also_closes_beads_noted_as_fixed_in_this_pr(verdict: list[Verdict]) -> None:
     fixes = [{"id": "om-f2", "status": "in_progress", "notes": f"PR: {URL}"}]
     gh, bd = FakeGitHub(), FakeBeads(fixes=fixes, others=[{"id": "om-b"}, {"id": "om-f2"}])
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
-    assert bd.calls == [("close", "om-1"), ("close", "om-f2"), ("close", "om-b"), ("push", None)]
+    assert bd.calls == [
+        ("close", "om-1"), ("close", "om-f2"), ("close", "om-b"), ("epics", 7), ("push", None)
+    ]  # fmt: skip
 
 
 def test_rejection_leaves_beads_fixed_in_this_pr_open(verdict: list[Verdict]) -> None:
@@ -137,7 +145,7 @@ def test_approval_with_out_of_scope_problems_files_debt_and_merges(
     gh, bd = FakeGitHub(), FakeBeads()
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
     assert ("merge", 7) in gh.calls
-    assert [c[0] for c in bd.calls] == ["create", "close", "push"]
+    assert [c[0] for c in bd.calls] == ["create", "close", "epics", "push"]
     assert bd.calls[0][1].startswith("Tech debt from PR #7")  # type: ignore[union-attr]
 
 
@@ -298,7 +306,7 @@ def test_merge_also_closes_open_rebase_fixes(verdict: list[Verdict]) -> None:
     fix = {**_rebase_fix(1), "status": "in_progress"}
     gh, bd = FakeGitHub(), FakeBeads(fixes=[fix])
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"
-    assert bd.calls == [("close", "om-1"), ("close", "om-r1"), ("push", None)]
+    assert bd.calls == [("close", "om-1"), ("close", "om-r1"), ("epics", 7), ("push", None)]
 
 
 def test_verdict_turns_a_rebase_failure_into_a_conflict_verdict(
@@ -313,3 +321,15 @@ def test_verdict_turns_a_rebase_failure_into_a_conflict_verdict(
     result = review._verdict(ctx, PR, "om-1", "ref")
     assert result.rebase_conflict and not result.approve
     assert "CONFLICT (content): a.py" in result.problems[0].detail
+
+
+def test_merge_closes_eligible_epics_before_the_single_push(verdict: list[Verdict]) -> None:
+    gh, bd = FakeGitHub(), FakeBeads(eligible=["om-e.1", "om-e"])
+    assert review.review_pr(_ctx(gh, bd), PR) == "merged"
+    assert bd.calls[-2:] == [("epics", 7), ("push", None)]
+
+
+def test_dry_run_closes_no_epics(verdict: list[Verdict]) -> None:
+    bd = FakeBeads(eligible=["om-e"])
+    review.review_pr(_ctx(FakeGitHub(), bd, dry_run=True), PR)
+    assert ("epics", 7) not in bd.calls

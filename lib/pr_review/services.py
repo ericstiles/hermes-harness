@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 
 from pr_review.fixes import FIXED_IN_PREFIX, HUMAN_LABEL, REVIEW_FIX_LABEL, is_fix_for, is_fixed_in
@@ -10,6 +11,9 @@ from pr_review.meta import BRANCH_PREFIX
 from pr_review.shell import Runner, must
 
 LABEL_COLOR = "d93f0b"
+# Rounds of `bd epic close-eligible`: closing a child epic can make its parent eligible.
+MAX_EPIC_ROUNDS = 10
+log = logging.getLogger("pr_review")
 
 _PR_FIELDS = "number,title,body,headRefName,headRefOid,url,isDraft"
 
@@ -122,6 +126,30 @@ class Beads:
             "--json",
         ]
         must(self._run(cmd), "bd close")
+
+    def close_eligible_epics(self, pr: PullRequest) -> list[str]:
+        """Close every epic whose children are all done, repeating for parents that become
+        eligible in turn (capped). Never raises: a merged PR must not fail on this."""
+        reason = f"All children completed (after merged PR #{pr.number})"
+        closed: list[str] = []
+        for _ in range(MAX_EPIC_ROUNDS):
+            result = self._run(["bd", "epic", "close-eligible", "--json", "--reason", reason])
+            try:
+                data = json.loads(result.out) if result.ok else None
+                ids = [str(i) for i in data["closed"]] if isinstance(data, dict) else None
+            except (ValueError, KeyError, TypeError):
+                ids = None
+            if ids is None:
+                log.warning("bd epic close-eligible failed (%s): %s", result.code,
+                            (result.err or result.out).strip()[:300])  # fmt: skip
+                return closed
+            if not ids:
+                return closed
+            for epic in ids:
+                log.info("closed epic %s: all its children are done", epic)
+            closed += ids
+        log.warning("bd epic close-eligible: stopped after %d rounds", MAX_EPIC_ROUNDS)
+        return closed
 
     def note(self, bead: str, text: str) -> None:
         must(self._run(["bd", "update", bead, "--append-notes", text]), "bd update")

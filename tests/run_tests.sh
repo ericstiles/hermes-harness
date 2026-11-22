@@ -165,6 +165,14 @@ cat > "$tmp/bin/hermes" <<'S'
 echo "hermes $*" >> "$STUB_LOG"
 # sessions list: STUB_SESSIONS=1 shows a harness session started now, plus an older harness
 # session and a newer-sorting unrelated chat that must both be ignored
+# prompt-size: prints $STUB_PROMPT_SIZE (canned `hermes prompt-size --json`) if set, else fails;
+# STUB_PROMPT_SIZE_HANG=1 hangs. Logs the directory it ran in.
+if [ "$1" = prompt-size ]; then
+  echo "prompt-size cwd=$(pwd -P)" >> "$STUB_LOG"
+  [ "${STUB_PROMPT_SIZE_HANG:-0}" = 1 ] && { sleep 60; exit 0; }
+  [ -n "$STUB_PROMPT_SIZE" ] && { cat "$STUB_PROMPT_SIZE"; exit 0; }
+  exit 1
+fi
 # sessions export: prints $STUB_EXPORT (a canned `hermes sessions export` JSON line) if set;
 # STUB_EXPORT_HANG=1 hangs instead (a stuck Hermes CLI)
 if [ "$1 $2" = "sessions export" ]; then

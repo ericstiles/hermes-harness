@@ -220,3 +220,70 @@ def test_window_flag_without_value_reports_not_positive(no_real_lookups: None) -
     assert line.startswith("CONTEXT: used cumulative in=49060 ")
     assert "--window is not a positive integer" in line
     assert "no --window" not in line
+
+
+# --- bead hermes-harness-39w.3: fixed prompt baseline from `hermes prompt-size --json` ---
+
+# Real shape and values (organize_music, 2026-11-21); prompt-size reports chars/bytes.
+PROMPT_SIZE = {
+    "platform": "cli",
+    "model": "qwen3.8:27b-mlx",
+    "system_prompt": {"chars": 55811, "bytes": 56648},
+    "skills_index": {"chars": 8195, "bytes": 8217},
+    "memory": {"chars": 1515, "bytes": 1705},
+    "user_profile": {"chars": 774, "bytes": 961},
+    "tools": {"count": 27, "json_bytes": 71824},
+    "sections": [
+        ["stable (identity/guidance/skills)", 21728, 21862],
+        ["context (AGENTS.md/cwd files)", 21936, 22228],
+        ["volatile (memory/profile/timestamp)", 12143, 12554],
+    ],
+    "skills_breakdown": [],
+}
+BASELINE = (
+    "CONTEXT: baseline system_prompt=55811 chars tools=27 (71824 B schema) memory=1515 "
+    "skills_index=8195 context_files=21936 (chars and bytes; Hermes reports no token count)"
+)
+
+
+def test_prompt_size_json_becomes_the_baseline_line() -> None:
+    assert cu.baseline_line(cu.parse_prompt_size(json.dumps(PROMPT_SIZE))) == BASELINE
+
+
+def test_baseline_never_claims_tokens() -> None:
+    line = cu.baseline_line(cu.parse_prompt_size(json.dumps(PROMPT_SIZE)))
+    assert not re.search(r"\d+ tokens|tokens=", line)
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (lambda d: d.pop("system_prompt"), "system_prompt.chars is missing"),
+        (lambda d: d["tools"].update(count="many"), "tools.count is not a non-negative integer"),
+        (lambda d: d.update(sections=[["stable", 1, 1]]), "no context section"),
+    ],
+)
+def test_malformed_prompt_size_is_rejected_with_a_reason(change: object, reason: str) -> None:
+    data = json.loads(json.dumps(PROMPT_SIZE))
+    change(data)  # type: ignore[operator]
+    with pytest.raises(ValueError, match=re.escape(reason)):
+        cu.parse_prompt_size(json.dumps(data))
+
+
+@pytest.mark.parametrize(("stdin", "reason"), [("", "empty input"), ("oops\n", "not JSON")])
+def test_baseline_mode_prints_unavailable_and_exits_0(stdin: str, reason: str) -> None:
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "--baseline"],
+        input=stdin, capture_output=True, text=True, timeout=30, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0
+    assert done.stdout == f"CONTEXT: baseline unavailable ({reason})\n"
+
+
+def test_baseline_mode_prints_the_line() -> None:
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "--baseline"],
+        input=json.dumps(PROMPT_SIZE) + "\n",
+        capture_output=True, text=True, timeout=30, check=False,
+    )  # fmt: skip
+    assert (done.returncode, done.stdout) == (0, BASELINE + "\n")

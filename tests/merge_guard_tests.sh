@@ -8,7 +8,10 @@ mg() { # <tool> <command> -> exit code of the hook
 }
 for cmd in "gh pr merge 4 --rebase" "gh pr merge --rebase 4" "cd /x && gh pr merge 12 --rebase" "git status" "gh pr view 4" \
            "git commit -m 'allow only gh pr merge <N> --rebase'" "bd note x 'the old rule let gh pr merge -s 4 through'" \
-           "echo 'gh pr merge -s 0'" "gh pr view 5 --json state"; do
+           "echo 'gh pr merge -s 0'" "gh pr view 5 --json state" \
+           "gh pr view 5 --json state,mergeable -q '.state|@tsv'" "gh pr list --json mergeable -q '.[]|.mergeable'" \
+           $'git commit -m "first line\ngh pr merge -s 4 is now blocked"' $'git status\ngh pr view 4' \
+           "python3 -c 'import sys; print(\"gh pr merge -s 4\")'"; do
   mg Bash "$cmd"; eq "merge guard: allows '$cmd'" "$?" 0
 done
 for cmd in "gh pr merge -s 4" "gh pr merge 4 -ds" "gh pr merge 4 -s" "gh pr merge 4 --rebase --admin" \
@@ -18,7 +21,8 @@ for cmd in "gh pr merge -s 4" "gh pr merge 4 -ds" "gh pr merge 4 -s" "gh pr merg
            "eval gh pr merge -s 4" "/opt/homebrew/bin/gh pr merge -s 4" "(gh pr merge -s 4)" "gh -R o/r pr merge -s 4" \
            "if true; then gh pr merge 5 -s; fi" "! gh pr merge 5 -s" "timeout 60 gh pr merge 5 -s" \
            "\\gh pr merge 5 -s" "'gh' pr merge 5 -s" "gh pr 'merge' 5 -s" "timeout 60 bash -c 'gh pr merge -s 4'" \
-           "echo gh pr merge -s 0" "echo \$(date) gh pr merge -s 0" "gh pr merge 5 -s &" "gh pr merge 5 --rebase 'x"; do
+           "echo gh pr merge -s 0" "echo \$(date) gh pr merge -s 0" "gh pr merge 5 -s &" "gh pr merge 5 --rebase 'x" \
+           $'git status\ngh pr merge 5 -s' "gh pr view 5 -q '.a|.b' && gh pr merge 5 -s"; do
   mg Bash "$cmd"; eq "merge guard: blocks '$cmd'" "$?" 2
 done
 mg Bash "gh pr merge -s 4"; grep -q "gh pr merge <N> --rebase" "$tmp/mg.err" \

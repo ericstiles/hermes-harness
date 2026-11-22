@@ -49,6 +49,9 @@ class Check:
 class ReviewConfig:
     checks: tuple[Check, ...]
     instructions: Path
+    # What `{python}` became: the host venv's python. A PR that changes dependencies gets its
+    # checks rewritten to a throwaway venv in its worktree instead (pr_env.py).
+    python: str = "python3"
 
 
 def _check(raw: object, python: str) -> Check:
@@ -86,7 +89,7 @@ def load_config(repo: Path, harness_home: Path) -> ReviewConfig:
         instructions = repo / "docs" / "REVIEWER_AGENT.md"
     else:
         instructions = harness_home / "templates" / "REVIEWER_AGENT.md"
-    return ReviewConfig(checks, instructions)
+    return ReviewConfig(checks, instructions, python)
 
 
 def _ruff_problem(line: str) -> Problem:

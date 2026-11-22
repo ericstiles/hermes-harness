@@ -202,3 +202,44 @@ def test_verdict_with_a_failed_install_runs_no_checks_and_reports_one_problem(
     verdict = seen["verdict"]
     assert not verdict.approve  # type: ignore[attr-defined]
     assert [p.title for p in verdict.problems] == [problem.title]  # type: ignore[attr-defined]
+
+
+# --- PR #14 review notes ---
+
+
+def test_non_utf8_pyproject_does_not_abort_the_review(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_bytes(b'[project]\nname = "x\xff"\n')
+    run = StubRunner(tmp_path, "pyproject.toml\n")
+    env = pr_env.pr_environment(run, tmp_path, CHECKS, HOST)  # must not raise
+    assert env.problem is None
+    (pip,) = run.pip_calls()
+    assert pip[-2:] == ["-e", ".[dev]"]
+
+
+def test_venv_python_printing_no_site_path_is_one_environment_problem(tmp_path: Path) -> None:
+    _project(tmp_path)
+
+    class Silent(StubRunner):
+        def __call__(self, cmd, cwd=None, env=None, timeout=None):  # type: ignore[no-untyped-def]
+            parts = list(cmd)
+            if parts[1:3] == ["-c", pr_env.SITE_PATHS] and parts[0] != HOST:
+                self.calls.append(parts)
+                return Result(0, "", "")
+            return super().__call__(cmd, cwd, env, timeout)
+
+    env = pr_env.pr_environment(Silent(tmp_path, "pyproject.toml\n"), tmp_path, CHECKS, HOST)
+    assert env.checks == ()
+    assert env.problem is not None and "printed no site-packages path" in env.problem.detail
+
+
+def test_dependency_change_with_nothing_installable_is_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n")
+    with caplog.at_level("INFO", logger="pr_review"):
+        env = pr_env.pr_environment(
+            StubRunner(tmp_path, "sub/pyproject.toml\n"), tmp_path, CHECKS, HOST
+        )
+    assert env == pr_env.GateEnv(CHECKS)
+    assert "nothing installable at the repo root" in caplog.text
+    assert "sub/pyproject.toml" in caplog.text

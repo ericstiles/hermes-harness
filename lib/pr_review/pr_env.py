@@ -68,7 +68,8 @@ def install_args(tree: Path) -> list[str]:
     args: list[str] = []
     pyproject = tree / "pyproject.toml"
     has_project = (tree / "setup.py").is_file() or (
-        pyproject.is_file() and _PROJECT_TABLE.search(pyproject.read_text(encoding="utf-8"))
+        pyproject.is_file()
+        and _PROJECT_TABLE.search(pyproject.read_text(encoding="utf-8", errors="replace"))
     )
     if has_project:
         args += ["-e", ".[dev]"]
@@ -83,7 +84,10 @@ def _site_paths(run: Runner, python: str, tree: Path) -> list[str]:
     result = run(cmd, cwd=tree, timeout=STEP_TIMEOUT)
     if not result.ok:
         raise _InstallError(_describe(cmd, result.err or result.out))
-    return list(dict.fromkeys(p.strip() for p in result.out.splitlines() if p.strip()))
+    paths = list(dict.fromkeys(p.strip() for p in result.out.splitlines() if p.strip()))
+    if not paths:
+        raise _InstallError(f"`{' '.join(cmd)}` printed no site-packages path")
+    return paths
 
 
 def _describe(cmd: list[str], output: str) -> str:
@@ -116,6 +120,11 @@ def pr_environment(run: Runner, tree: Path, checks: tuple[Check, ...], host_pyth
     """The checks to run for this PR: unchanged, in a fresh venv, or none with one problem."""
     changed = changed_dependency_files(run, tree)
     args = install_args(tree) if changed else []
+    if changed and not args:
+        log.info(
+            "PR environment: %s changed, but nothing installable at the repo root; host venv",
+            ", ".join(changed),
+        )
     if not args:
         return GateEnv(checks)
     log.info("PR environment: %s changed; installing into %s", ", ".join(changed), VENV_DIR)

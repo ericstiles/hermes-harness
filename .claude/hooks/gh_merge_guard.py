@@ -9,8 +9,10 @@ backslashes are removed, and `;`, `&&`, `||`, `|`, `&`, newlines, `(`, `)` outsi
 become separators, so a `|` or newline inside a quoted string stays part of its word.
 Each segment between separators that RUNS a PR merge must be exactly
 `gh pr merge <N> --rebase` or `gh pr merge --rebase <N>`. A segment runs a merge when a
-separate `gh` word (any path) is followed later by the words `pr` `merge`, wherever it
-sits (after if/then/!, timeout, env, a VAR=value prefix, inside $(...) or backticks).
+separate `gh` word (any path) is followed later by the word `pr` and, after that, by the
+word `merge`, not necessarily adjacent (`gh pr -R o/r merge 5`), or by `api` and a
+`.../pulls/<N>/merge` endpoint; wherever it sits (after if/then/!, timeout, env, a
+VAR=value prefix, inside $(...) or backticks).
 A segment that invokes a shell (bash/sh/zsh/eval ...) and has a word containing the
 whole word `merge` is blocked, since its merge hides inside one quoted word. Unbalanced
 quotes in a command that mentions gh and the word merge are blocked. shlex does not
@@ -40,6 +42,7 @@ import sys
 BLOCK = 2
 ALLOWED = (re.compile(r"gh pr merge [0-9]+ --rebase"), re.compile(r"gh pr merge --rebase [0-9]+"))
 MERGE_WORD = re.compile(r"\bmerge\b")
+PULLS_MERGE = re.compile(r"/pulls/[^/\s]+/merge\b")
 PUNCTUATION = "();<>|&\n"
 SEPARATOR_CHARS = frozenset("();|&\n")
 SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish", "eval"})
@@ -84,12 +87,18 @@ def _has_expansion(word: str) -> bool:
 
 
 def _runs_merge(words: list[str]) -> bool:
-    """True when a separate `gh` word is followed (anywhere later) by `pr` `merge`."""
+    """True when a separate `gh` word is followed later by `pr` and, after that, by `merge`.
+
+    Not necessarily adjacent: gh accepts flags between them (`gh pr -R o/r merge 5`).
+    Also true for the REST merge endpoint (`gh api ... repos/o/r/pulls/5/merge`)."""
     for i, word in enumerate(words):
-        if _is_gh(word):
-            rest = words[i + 1 :]
-            if any(rest[j : j + 2] == ["pr", "merge"] for j in range(len(rest) - 1)):
-                return True
+        if not _is_gh(word):
+            continue
+        rest = words[i + 1 :]
+        if "pr" in rest and "merge" in rest[rest.index("pr") + 1 :]:
+            return True
+        if "api" in rest and any(PULLS_MERGE.search(w) for w in rest[rest.index("api") + 1 :]):
+            return True
     return False
 
 

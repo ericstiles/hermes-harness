@@ -13,6 +13,7 @@ from pr_review import agent, fixes, local_agent
 from pr_review.checks import ReviewConfig, new_problems
 from pr_review.gate import GateOutput, RebaseConflict, checkout, fetch, run_gate
 from pr_review.meta import BeadMismatch, resolve_bead
+from pr_review.pr_env import pr_environment
 from pr_review.progress import step
 from pr_review.services import Beads, GitHub, PullRequest, desktop_notify
 from pr_review.shell import Runner, must, run
@@ -113,9 +114,16 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
         with ExitStack() as stack:
             with step(f"{tag}: rebase onto origin/main"):
                 tree = stack.enter_context(checkout(ctx.run, ctx.repo, ref, rebase_onto_main=True))
-            with step(f"{tag}: running checks"):
-                gate_output = run_gate(ctx.run, tree, ctx.config.checks)
+            with step(f"{tag}: preparing the PR's environment"):
+                env = pr_environment(ctx.run, tree, ctx.config.checks, ctx.config.python)
+            gate_output: GateOutput = {}
+            if env.problem is None:
+                with step(f"{tag}: running checks"):
+                    gate_output = run_gate(ctx.run, tree, env.checks)
             found, report = _checks_report(ctx, base, gate_output)
+            if env.problem is not None:  # one environment problem instead of per-test failures
+                found = [env.problem, *found]
+                report = f"### environment: {env.problem.title}\n{env.problem.detail}\n\n{report}"
             log.info("%s: checks found %d new problem(s)", tag, len(found))
             with step(f"{tag}: building the diff"):
                 diff = must(

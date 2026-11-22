@@ -163,6 +163,9 @@ def _merge(ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, fix_ids: 
         _file_debt(ctx, verdict, bead, pr)
         for issue in to_close:
             ctx.beads.close(issue, pr)
+        # A merge can finish an epic's last child: close such epics (and parents that become
+        # eligible) now, so a done epic never blocks the queue (xw2.1). One push carries both.
+        ctx.beads.close_eligible_epics(pr)
         ctx.beads.push()
     return "merged"
 

@@ -23,7 +23,7 @@ last_result() { tr -d '\r' < "$runlog" | grep '^RUN_RESULT=' | tail -n 1; }
 rm -rf "$STUB_BEADS"; bead "$T" in_progress "Claimed.
 PR: $URL"
 nc_run STUB_PR_BODY="Bead: $T"
-[ "$rc" = 0 ] && echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && [ "$(last_result)" = RUN_RESULT=OK_DONE ] \
+[ "$rc" = 0 ] && say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && [ "$(last_result)" = RUN_RESULT=OK_DONE ] \
   && ok "notes check: OK_DONE run whose bead notes contain the PR URL stays OK_DONE" || bad "notes check: intact" "$rc $(echo "$out" | tail -4)"
 grep -q "^gh pr view $URL" "$STUB_LOG" && grep -q "^bd show $T --json" "$STUB_LOG" \
   && [ "$(grep -n '^bd dolt pull' "$STUB_LOG" | head -n 1 | cut -d: -f1)" -lt "$(grep -n '^bd show' "$STUB_LOG" | head -n 1 | cut -d: -f1)" ] \
@@ -34,7 +34,7 @@ grep -qE '^bd (update|close|unclaim|create|dolt push)' "$STUB_LOG" && bad "notes
 # 2. notes wiped -> NOTES_LOST, explained in the log, loop stops
 bead "$T" in_progress "Claimed. Working."
 nc_run STUB_PR_BODY="Bead: $T"
-[ "$rc" = 1 ] && echo "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && [ "$(last_result)" = RUN_RESULT=NOTES_LOST ] \
+[ "$rc" = 1 ] && say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && [ "$(last_result)" = RUN_RESULT=NOTES_LOST ] \
   && ok "notes check: OK_DONE run whose bead notes lack the PR URL becomes NOTES_LOST" || bad "notes check: lost" "$rc $(echo "$out" | tail -4)"
 grep -qxF "NOTES_CHECK: $T missing $URL in notes" "$runlog" && ok "notes check: the log says which bead lost which URL" \
   || bad "notes check: NOTES_CHECK line" "$(grep NOTES_CHECK "$runlog")"
@@ -44,40 +44,40 @@ eq "notes check: classify reads NOTES_LOST back from the log" "$(hermes_classify
 # 3. the ticket is no longer in_progress (the reviewer needs it in_progress)
 bead "$T" closed "PR: $URL"
 nc_run STUB_PR_BODY="Bead: $T"
-echo "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T status closed, expected in_progress" "$runlog" \
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T status closed, expected in_progress" "$runlog" \
   && ok "notes check: a ticket that is not in_progress is NOTES_LOST" || bad "notes check: status" "$(grep NOTES_CHECK "$runlog") $(echo "$out" | tail -2)"
 
 # 4. review-fix run: claimed F, PR body names T; both need the URL
 bead "$T" in_progress "PR: $URL"; bead "$F" in_progress "PR: $URL"
 nc_run STUB_FIXTURE="$FX/review_fix_done.log" STUB_PR_BODY="Bead: $T"
-echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd show $F --json" "$STUB_LOG" && grep -q "^bd show $T --json" "$STUB_LOG" \
+say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd show $F --json" "$STUB_LOG" && grep -q "^bd show $T --json" "$STUB_LOG" \
   && ok "notes check: review-fix run checks both the ticket and the review-fix bead" || bad "notes check: review-fix ok" "$(cat "$STUB_LOG") $(echo "$out" | tail -2)"
 bead "$F" in_progress "Working on the review points."
 nc_run STUB_FIXTURE="$FX/review_fix_done.log" STUB_PR_BODY="Bead: $T"
-echo "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $F missing $URL in notes" "$runlog" \
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $F missing $URL in notes" "$runlog" \
   && ok "notes check: review-fix run checks the review-fix bead's notes (PR: <url>)" || bad "notes check: review-fix F" "$(grep NOTES_CHECK "$runlog") $(echo "$out" | tail -2)"
 bead "$F" in_progress "PR: $URL"; bead "$T" in_progress "replaced by the review-fix run"
 nc_run STUB_FIXTURE="$FX/review_fix_done.log" STUB_PR_BODY="Bead: $T"
-echo "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T missing $URL in notes" "$runlog" \
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T missing $URL in notes" "$runlog" \
   && ok "notes check: a review-fix run that wiped the ticket's notes is NOTES_LOST (the eac incident)" || bad "notes check: eac" "$(grep NOTES_CHECK "$runlog") $(echo "$out" | tail -2)"
 
 # 5. gh cannot read the PR -> fall back to the claimed bead
 bead "$T" in_progress "PR: $URL"
 nc_run
-echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd show $T --json" "$STUB_LOG" \
+say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd show $T --json" "$STUB_LOG" \
   && ok "notes check: without the PR body it checks the claimed bead" || bad "notes check: fallback" "$(cat "$STUB_LOG")"
 bead "$T" in_progress ""
 nc_run
-echo "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && ok "notes check: the claimed-bead fallback still catches lost notes" \
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && ok "notes check: the claimed-bead fallback still catches lost notes" \
   || bad "notes check: fallback lost" "$(echo "$out" | tail -3)"
 
 # 6. cannot check -> warning, original class kept
 nc_run STUB_PR_BODY="Bead: $T" STUB_BD_SHOW_FAIL=1
-[ "$rc" = 0 ] && echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && echo "$out" | grep -q '^warning: notes check skipped' \
+[ "$rc" = 0 ] && say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && say "$out" | grep -q '^warning: notes check skipped' \
   && ok "notes check: bd failure prints a warning and keeps the original class" || bad "notes check: bd failure" "$rc $(echo "$out" | tail -4)"
 rm -rf "$STUB_BEADS"
 nc_run STUB_PR_BODY="Bead: $T"
-[ "$rc" = 0 ] && echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && echo "$out" | grep -q '^warning: notes check skipped' \
+[ "$rc" = 0 ] && say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && say "$out" | grep -q '^warning: notes check skipped' \
   && ok "notes check: unreadable bd show output keeps the original class" || bad "notes check: bad json" "$rc $(echo "$out" | tail -4)"
 nc_run STUB_FIXTURE="$FX/blocked.log" STUB_PR_BODY="Bead: $T"
 grep -q '^bd show' "$STUB_LOG" && bad "notes check: ran for a non-OK_DONE run" "$(cat "$STUB_LOG")" \
@@ -86,7 +86,7 @@ grep -q '^bd show' "$STUB_LOG" && bad "notes check: ran for a non-OK_DONE run" "
 # 7. supervise: a human repairs the notes
 bead "$T" in_progress ""; nc_run STUB_PR_BODY="Bead: $T"
 out=$(HERMES_LOG_DIR="$W/logs" runit "$BIN/hermes-supervise" "$runlog")
-echo "$out" | grep -q '^CLASS=NOTES_LOST$' && echo "$out" | grep -q '^ACTION=ASK_HUMAN$' \
-  && echo "$out" | grep -q "^WHY=.*bd update $T --append-notes \"PR: $URL\"" \
+say "$out" | grep -q '^CLASS=NOTES_LOST$' && say "$out" | grep -q '^ACTION=ASK_HUMAN$' \
+  && say "$out" | grep -q "^WHY=.*bd update $T --append-notes \"PR: $URL\"" \
   && ok "notes check: supervise asks the human and shows the repair command" || bad "notes check: supervise" "$out"
 rm -rf "$W/logs" "$STUB_BEADS"; unset STUB_BEADS

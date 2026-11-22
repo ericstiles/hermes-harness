@@ -58,16 +58,16 @@ grep -qx 'STOP_REASON: unknown' "$rl" && grep -qx 'RUN_RESULT=AGENT_STOPPED' "$r
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 out=$(HERMES_AGENT_LOG="$AL" STUB_FIXTURE="$TL" STUB_FIXTURE_2="$FX/wrapup_saved.log" runit "$BIN/hermes-run" 3 2>&1); rc=$?
 calls=$(grep -c '^hermes chat' "$STUB_LOG"); second=$(grep '^hermes chat' "$STUB_LOG" | sed -n 2p)
-[ "$calls" = 2 ] && echo "$second" | grep -q -- '--resume 20261121_080000_abcdef' && echo "$second" | grep -q 'tool-call budget' \
-  && echo "$second" | grep -q 'RUN_WIP_SAVED' && ok "turn limit: the session is resumed once for a wrap-up, not a continue" \
+[ "$calls" = 2 ] && say "$second" | grep -q -- '--resume 20261121_080000_abcdef' && say "$second" | grep -q 'tool-call budget' \
+  && say "$second" | grep -q 'RUN_WIP_SAVED' && ok "turn limit: the session is resumed once for a wrap-up, not a continue" \
   || bad "turn limit: wrap-up" "$calls | $second"
 grep -q 'bd unclaim widgets-abc' "$STUB_LOG" && ok "turn limit: the claim is released after the wrap-up" \
   || bad "turn limit: unclaim" "$(grep '^bd' "$STUB_LOG" | tail -n 5)"
-[ $rc -eq 1 ] && echo "$out" | grep -q '^FINAL_RESULT=TURN_LIMIT$' && echo "$out" | grep -qi 'split' \
+[ $rc -eq 1 ] && say "$out" | grep -q '^FINAL_RESULT=TURN_LIMIT$' && say "$out" | grep -qi 'split' \
   && ok "turn limit: the loop stops as TURN_LIMIT and says to split the issue" || bad "turn limit: final" "$rc $(echo "$out" | tail -n 4)"
 
 # --- supervise: a human splits the issue ---
 out=$(HERMES_LOG_DIR="$tmp/l5" runit "$BIN/hermes-supervise" "$TL")
-echo "$out" | grep -q '^CLASS=TURN_LIMIT$' && echo "$out" | grep -q '^ACTION=ASK_HUMAN$' && echo "$out" | grep -q '^WHY=.*split' \
+say "$out" | grep -q '^CLASS=TURN_LIMIT$' && say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q '^WHY=.*split' \
   && ok "turn limit: supervise asks the human to split the issue" || bad "turn limit: supervise" "$out"
 rm -rf "$W/logs"

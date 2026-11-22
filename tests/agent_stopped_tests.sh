@@ -13,27 +13,27 @@ rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 out=$(STUB_FIXTURE="$SF" STUB_FIXTURE_2="$FX/ok_done.log" runit "$BIN/hermes-run" 1 2>&1); rc=$?
 calls=$(grep -c '^hermes chat' "$STUB_LOG")
 second=$(grep '^hermes chat' "$STUB_LOG" | sed -n 2p)
-[ "$calls" = 2 ] && echo "$second" | grep -q -- "--resume $SID" && echo "$second" | grep -q -- '--pass-session-id' \
+[ "$calls" = 2 ] && say "$second" | grep -q -- "--resume $SID" && say "$second" | grep -q -- '--pass-session-id' \
   && ok "agent_stopped: hermes-run resumes the same session once" || bad "agent_stopped: resume" "$calls | $second"
 [ "$(grep -c '^env HERMES_HARNESS_RUN=1$' "$STUB_LOG")" = 2 ] && [ -z "${HERMES_HARNESS_RUN:-}" ] \
   && ok "hermes-run sets HERMES_HARNESS_RUN=1 for every hermes chat (gates the notes guard hook)" \
   || bad "hermes-run HERMES_HARNESS_RUN" "$(grep '^env' "$STUB_LOG")"
-echo "$second" | grep -q 'No human is present' && ok "agent_stopped: the resume prompt says no human is present" || bad "agent_stopped: resume prompt" "$second"
-[ $rc -eq 0 ] && echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && ok "agent_stopped: a successful resume counts as OK_DONE" || bad "agent_stopped: resume result" "$rc $(echo "$out" | tail -4)"
+say "$second" | grep -q 'No human is present' && ok "agent_stopped: the resume prompt says no human is present" || bad "agent_stopped: resume prompt" "$second"
+[ $rc -eq 0 ] && say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && ok "agent_stopped: a successful resume counts as OK_DONE" || bad "agent_stopped: resume result" "$rc $(echo "$out" | tail -4)"
 [ "$(ls "$W"/logs/run-*.log | wc -l | tr -d ' ')" = 2 ] && grep -q '^RUN_RESULT=AGENT_STOPPED$' "$W"/logs/run-*.log \
   && ok "agent_stopped: the stopped run and the resumed run have their own logs" || bad "agent_stopped: logs" "$(ls "$W/logs")"
 
 # never resumed twice: a second early stop ends the loop as AGENT_STOPPED
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 out=$(STUB_FIXTURE="$SF" STUB_FIXTURE_2="$SF" runit "$BIN/hermes-run" 3 2>&1); rc=$?
-[ "$(grep -c '^hermes chat' "$STUB_LOG")" = 2 ] && [ $rc -eq 1 ] && echo "$out" | grep -q '^FINAL_RESULT=AGENT_STOPPED$' \
+[ "$(grep -c '^hermes chat' "$STUB_LOG")" = 2 ] && [ $rc -eq 1 ] && say "$out" | grep -q '^FINAL_RESULT=AGENT_STOPPED$' \
   && ok "agent_stopped: resumed at most once, then the loop stops" || bad "agent_stopped: once" "$rc $(grep -c '^hermes chat' "$STUB_LOG") $(echo "$out" | tail -3)"
 
 # it already opened a PR but never printed the URL (real run 2026-11-18 "opened PR #6"):
 # GitHub is the source of truth -> OK_DONE, no resume
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 out=$(STUB_PR_URL=https://github.com/acme/widgets/pull/77 STUB_FIXTURE="$SF" runit "$BIN/hermes-run" 1 2>&1); rc=$?
-[ "$(grep -c '^hermes chat' "$STUB_LOG")" = 1 ] && [ $rc -eq 0 ] && echo "$out" | grep -q '^FINAL_RESULT=OK_DONE$' \
+[ "$(grep -c '^hermes chat' "$STUB_LOG")" = 1 ] && [ $rc -eq 0 ] && say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' \
   && [ "$(grep '^RUN_RESULT=' "$W"/logs/run-*.log | tail -n 1 | cut -d: -f2-)" = RUN_RESULT=OK_DONE ] \
   && grep -q 'gh pr list .*--head bd/organize_music-6ut.10' "$STUB_LOG" \
   && ok "agent_stopped: an existing PR for the claimed issue counts as OK_DONE, no resume" || bad "agent_stopped: existing PR" "$rc $(cat "$STUB_LOG") $(echo "$out" | tail -3)"
@@ -51,6 +51,6 @@ grep -q 'No human is present' "$ROOT/templates/AGENTS_WORKFLOW.md" && ok "agent_
 
 # supervise: a human decides, and is given the exact resume command
 out=$(HERMES_LOG_DIR="$tmp/l3" runit "$BIN/hermes-supervise" "$SF")
-echo "$out" | grep -q '^ACTION=ASK_HUMAN$' && echo "$out" | grep -q "^WHY=.*hermes --resume $SID" \
+say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q "^WHY=.*hermes --resume $SID" \
   && ok "agent_stopped: supervise asks the human and shows the resume command" || bad "agent_stopped: supervise" "$out"
 rm -rf "$W/logs"

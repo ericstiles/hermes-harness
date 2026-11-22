@@ -18,8 +18,8 @@ for script in "${HELP_SCRIPTS[@]}"; do
     # .py files run via python3, as hermes-run and Hermes call them.
     case $script in *.py) runner=(python3 "$script") ;; *) runner=("$script") ;; esac
     out=$(cd "$HELP_DIR" && "${runner[@]}" "$flag" 2>&1 </dev/null); rc=$?
-    if [ "$rc" -eq 0 ] && echo "$out" | grep -qi "usage:.*${name%.*}" \
-       && echo "$out" | grep -qE -- '(-h, --help|--help)' && [ "$(ls -A "$HELP_DIR")" = "$before" ]; then
+    if [ "$rc" -eq 0 ] && say "$out" | grep -qi "usage:.*${name%.*}" \
+       && say "$out" | grep -qE -- '(-h, --help|--help)' && [ "$(ls -A "$HELP_DIR")" = "$before" ]; then
       ok "help: $name $flag"
     else
       bad "help: $name $flag" "rc=$rc $(echo "$out" | head -n 3)"
@@ -28,8 +28,8 @@ for script in "${HELP_SCRIPTS[@]}"; do
 done
 # The flag is honoured anywhere on the command line, not only first.
 out=$(cd "$HELP_DIR" && "$BIN/hermes-review" --dry-run --help 2>&1 </dev/null); rc=$?
-[ "$rc" -eq 0 ] && echo "$out" | grep -qi 'usage:' && ok "help: hermes-review --dry-run --help" \
+[ "$rc" -eq 0 ] && say "$out" | grep -qi 'usage:' && ok "help: hermes-review --dry-run --help" \
   || bad "help: hermes-review flag not first" "rc=$rc $(echo "$out" | head -n 2)"
 out=$(cd "$HELP_DIR" && "$BIN/hermes-run" --clean --help 2>&1 </dev/null); rc=$?
-[ "$rc" -eq 0 ] && echo "$out" | grep -qi 'usage:' && ok "help: hermes-run --clean --help" \
+[ "$rc" -eq 0 ] && say "$out" | grep -qi 'usage:' && ok "help: hermes-run --clean --help" \
   || bad "help: hermes-run flag not first" "rc=$rc $(echo "$out" | head -n 2)"

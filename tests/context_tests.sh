@@ -21,7 +21,7 @@ grep -q "^$want .*\[window: 4096 (explicit --window)\]$" "$log" \
   && ok "context: finished run logs CONTEXT: used from its session export" || bad "context: used line" "$(grep CONTEXT "$log")"
 grep -q '^hermes sessions export --session-id 20261121_120000_aaa111 -$' "$STUB_LOG" \
   && ok "context: the export is asked for the footer's session id" || bad "context: export call" "$(grep 'sessions' "$STUB_LOG")"
-echo "$out" | grep -q "^$want " && ok "context: CONTEXT line is shown on the terminal" || bad "context: terminal" "$out"
+say "$out" | grep -q "^$want " && ok "context: CONTEXT line is shown on the terminal" || bad "context: terminal" "$out"
 grep -q "\] $want " "$W"/logs/run-*.timed.txt && ok "context: CONTEXT line is in the timed log" || bad "context: timed log" "$(grep CONTEXT "$W"/logs/run-*.timed.txt)"
 eq "context: a finished run still exits 0 and classifies OK_DONE" "$rc|$(tail -n 1 "$log")" "0|RUN_RESULT=OK_DONE"
 c=$(line_no "$log" '^CONTEXT: '); r=$(line_no "$log" '^RUN_RESULT=')

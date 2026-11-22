@@ -52,6 +52,13 @@ with the Bash tool's timeout set to 600000 ms (macOS may lack `timeout`). It mus
 end with `failed=0`. Any failure is a blocking problem: quote the lines from
 `grep '^FAIL' <dir>/gate.txt`.
 
+Run the gate ONCE. Never re-run it to get a green result, and never merge after a
+run with a failure, even one in a file the PR does not touch or one you believe is
+flaky. The tests must always pass: a flaky test is a bug. Verdict "changes needed",
+quote the failure, and say that it looks unrelated to the PR and needs its own bead
+(name an existing bead if `bd search` finds one). The owner fixes the test; the PR
+is reviewed again after that.
+
 ## 4. Review the diff
 
 `git -C "$tree" diff --stat origin/main...HEAD` and

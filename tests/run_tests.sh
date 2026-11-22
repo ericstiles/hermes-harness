@@ -7,6 +7,15 @@ FX="$HERE/fixtures"; BIN="$ROOT/bin"; pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "ok   - $1"; }
 bad() { fail=$((fail+1)); echo "FAIL - $1 (got: ${2:-})"; }
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "$2 != $3"; }
+# say <text>: print text into a pipe whose reader may stop early. Use it instead of `say "$x" | grep -q`:
+# under pipefail that fails at random, because grep -q exits on its first match and the still-writing
+# echo dies of SIGPIPE (exit 141). say ignores the broken pipe and always succeeds (bead szv).
+say() { ( trap '' PIPE; printf '%s\n' "$1" ) 2>/dev/null || true; }
+# a reader that stops early (grep -q) must never fail a check: 20 tries on large output
+big=$(seq 1 50000); fails=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do say "$big" | grep -q '^1$' || fails=$((fails + 1)); done
+eq "tests: say | grep -q on large output never breaks the pipe under pipefail (20 tries)" "$fails" 0
+unset big fails
 . "$ROOT/lib/classify.sh"
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -41,11 +50,11 @@ eq "supervise --classify needs no repo" "$(cd "$tmp" && "$BIN/hermes-supervise" 
 sup() { (cd "$W" && "$BIN/hermes-supervise" "$@"); }
 before=$(git -C "$W" status --porcelain)
 out=$(GH_TOKEN=SECRET_TOKEN_VALUE HERMES_LOG_DIR="$tmp/logs1" sup "$FX/timeout_killed.log")
-echo "$out" | grep -q '^CLASS=TIMEOUT$' && ok "supervise prints CLASS" || bad "supervise CLASS" "$out"
-echo "$out" | grep -q '^ACTION=AUTO_RELAUNCH$' && ok "timeout -> AUTO_RELAUNCH" || bad "timeout action" "$out"
-echo "$out" | grep -q -- '--timeout 120m' && ok "timeout doubled and capped at 120m" || bad "timeout arg" "$out"
-echo "$out" | grep -q '^NEXT=hermes-launch ' && ok "NEXT uses the PATH command, not a repo-relative script" || bad "NEXT form" "$out"
-echo "$out" | grep -q SECRET_TOKEN_VALUE && bad "token leaked" || ok "no token in output"
+say "$out" | grep -q '^CLASS=TIMEOUT$' && ok "supervise prints CLASS" || bad "supervise CLASS" "$out"
+say "$out" | grep -q '^ACTION=AUTO_RELAUNCH$' && ok "timeout -> AUTO_RELAUNCH" || bad "timeout action" "$out"
+say "$out" | grep -q -- '--timeout 120m' && ok "timeout doubled and capped at 120m" || bad "timeout arg" "$out"
+say "$out" | grep -q '^NEXT=hermes-launch ' && ok "NEXT uses the PATH command, not a repo-relative script" || bad "NEXT form" "$out"
+say "$out" | grep -q SECRET_TOKEN_VALUE && bad "token leaked" || ok "no token in output"
 eq "auth -> ASK_HUMAN" "$(HERMES_LOG_DIR=$tmp/l sup "$FX/auth_error.log" | sed -n 's/^ACTION=//p')" ASK_HUMAN
 eq "blocked -> ASK_HUMAN" "$(HERMES_LOG_DIR=$tmp/l sup "$FX/blocked.log" | sed -n 's/^ACTION=//p')" ASK_HUMAN
 eq "queue empty -> DONE" "$(HERMES_LOG_DIR=$tmp/l sup "$FX/queue_empty.log" | sed -n 's/^ACTION=//p')" DONE
@@ -54,11 +63,11 @@ mkdir -p "$tmp/l2"; d=$(date +%Y%m%d)
 printf '%s TIMEOUT widgets-abc\n%s TIMEOUT widgets-abc\n' "$d" "$d" > "$tmp/l2/.relaunches"
 sed 's/learn_hermes-[a-z0-9]*/widgets-abc/g' "$FX/timeout_killed.log" > "$tmp/widgets_timeout.log"
 out=$(HERMES_LOG_DIR="$tmp/l2" sup "$tmp/widgets_timeout.log")
-echo "$out" | grep -q '^ISSUE=widgets-abc$' && ok "issue id parsed for a non-learn_hermes prefix" || bad "issue prefix" "$out"
-echo "$out" | grep -q '^ACTION=ASK_HUMAN$' && echo "$out" | grep -q 'split' && ok "2nd timeout -> split issue" || bad "split rule" "$out"
+say "$out" | grep -q '^ISSUE=widgets-abc$' && ok "issue id parsed for a non-learn_hermes prefix" || bad "issue prefix" "$out"
+say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q 'split' && ok "2nd timeout -> split issue" || bad "split rule" "$out"
 eq "target repo status unchanged by supervise" "$(git -C "$W" status --porcelain)" "$before"
 out=$(cd "$tmp" && "$BIN/hermes-supervise" 2>&1)
-echo "$out" | grep -q '^ACTION=ASK_HUMAN$' && ok "supervise outside a git repo asks the human" || bad "no repo" "$out"
+say "$out" | grep -q '^ACTION=ASK_HUMAN$' && ok "supervise outside a git repo asks the human" || bad "no repo" "$out"
 
 # --- launch: refusals and repo-agnostic command ---
 # herdr/tmux are stubbed to fail so a test can never open a real tab or session.
@@ -67,50 +76,50 @@ mkdir -p "$tmp/nohost"; for c in herdr tmux; do printf '#!/bin/sh\necho "STUB %s
 printf '#!/bin/sh\nexit 0\n' > "$tmp/nohost/ps"; chmod +x "$tmp/nohost/ps"
 export PATH="$tmp/nohost:$PATH"
 out=$(cd "$W" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
-[ $rc -eq 1 ] && echo "$out" | grep -q GH_TOKEN && ok "launch refuses without GH_TOKEN" || bad "launch token refusal" "$rc $out"
+[ $rc -eq 1 ] && say "$out" | grep -q GH_TOKEN && ok "launch refuses without GH_TOKEN" || bad "launch token refusal" "$rc $out"
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1)
-echo "$out" | grep -q "cd '$W' &&" && echo "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "launch targets the current repo with an absolute hermes-run" || bad "launch cmd" "$out"
-echo "$out" | grep -q "GITHUB_REPO='acme/widgets'" && ok "launch resolves GITHUB_REPO from origin and shows it in the command" || bad "launch GITHUB_REPO shown" "$out"
-echo "$out" | grep -q 'ericstiles' && bad "launch hardcodes repo" "$out" || ok "launch dry-run has no hardcoded repo"
+say "$out" | grep -q "cd '$W' &&" && say "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "launch targets the current repo with an absolute hermes-run" || bad "launch cmd" "$out"
+say "$out" | grep -q "GITHUB_REPO='acme/widgets'" && ok "launch resolves GITHUB_REPO from origin and shows it in the command" || bad "launch GITHUB_REPO shown" "$out"
+say "$out" | grep -q 'ericstiles' && bad "launch hardcodes repo" "$out" || ok "launch dry-run has no hardcoded repo"
 # GITHUB_REPO that cannot be resolved must fail the dry-run, not just the real run
 NR="$tmp/norigin"; mkdir -p "$NR"; git -C "$NR" init -q -b main
 out=$(cd "$NR" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 1 ] && ok "dry-run exits 1 when GITHUB_REPO cannot be resolved" || bad "dry-run unresolved rc" "$rc $out"
-echo "$out" | grep -q 'GITHUB_REPO is not set' && echo "$out" | grep -q 'export GITHUB_REPO=owner/name' && echo "$out" | grep -q 'git remote add origin' && ok "dry-run says GITHUB_REPO must be set and how" || bad "dry-run unresolved msg" "$out"
-echo "$out" | grep -q 'DRY RUN: would start' && bad "dry-run printed a launch command despite the error" "$out" || ok "no launch command printed when a prerequisite is missing"
+say "$out" | grep -q 'GITHUB_REPO is not set' && say "$out" | grep -q 'export GITHUB_REPO=owner/name' && say "$out" | grep -q 'git remote add origin' && ok "dry-run says GITHUB_REPO must be set and how" || bad "dry-run unresolved msg" "$out"
+say "$out" | grep -q 'DRY RUN: would start' && bad "dry-run printed a launch command despite the error" "$out" || ok "no launch command printed when a prerequisite is missing"
 out=$(cd "$NR" && GITHUB_REPO=acme/override GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1)
-echo "$out" | grep -q "GITHUB_REPO='acme/override'" && ok "explicit GITHUB_REPO wins over origin" || bad "override" "$out"
+say "$out" | grep -q "GITHUB_REPO='acme/override'" && ok "explicit GITHUB_REPO wins over origin" || bad "override" "$out"
 # every missing prerequisite is reported at once
 out=$(cd "$NR" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1)
-echo "$out" | grep -q 'GITHUB_REPO is not set' && echo "$out" | grep -q 'GH_TOKEN is not set' && ok "dry-run lists all missing prerequisites together" || bad "all problems" "$out"
+say "$out" | grep -q 'GITHUB_REPO is not set' && say "$out" | grep -q 'GH_TOKEN is not set' && ok "dry-run lists all missing prerequisites together" || bad "all problems" "$out"
 # a real launch is refused the same way and records nothing
 out=$(cd "$NR" && GH_TOKEN=x "$BIN/hermes-launch" 2>&1); rc=$?
 [ $rc -eq 1 ] && [ ! -e "$NR/logs/.relaunches" ] && [ ! -e "$tmp/host_calls.log" ] && ok "real launch refused without GITHUB_REPO and records nothing" || bad "real launch unresolved" "$rc $out"
 out=$(cd "$tmp" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
-[ $rc -eq 2 ] && echo "$out" | grep -q 'not inside a git repo' && ok "launch refuses outside a git repo" || bad "launch no repo" "$rc $out"
+[ $rc -eq 2 ] && say "$out" | grep -q 'not inside a git repo' && ok "launch refuses outside a git repo" || bad "launch no repo" "$rc $out"
 
 rm -rf "$W/logs"; (cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run >/dev/null 2>&1)
 [ ! -e "$W/logs" ] && ok "--dry-run creates nothing in the repo" || bad "dry-run side effect" "$(ls -a "$W/logs")"
 # an active run (stubbed ps) blocks a launch, in --dry-run too
 mkdir -p "$tmp/busy"; printf '#!/bin/sh\necho "123 bash /x/bin/hermes-run 10"\n' > "$tmp/busy/ps"; chmod +x "$tmp/busy/ps"
 out=$(cd "$W" && PATH="$tmp/busy:$PATH" GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
-[ $rc -eq 1 ] && echo "$out" | grep -q 'already running' && ok "dry-run refuses while a run is active" || bad "active run refusal" "$rc $out"
+[ $rc -eq 1 ] && say "$out" | grep -q 'already running' && ok "dry-run refuses while a run is active" || bad "active run refusal" "$rc $out"
 # --- launch --help / -h: detailed, no side effects, works anywhere without a token ---
 for flag in -h --help; do
   out=$(cd "$tmp" && env -u GH_TOKEN "$BIN/hermes-launch" "$flag" 2>&1); rc=$?
   [ $rc -eq 0 ] && ok "launch $flag exits 0 outside a repo without GH_TOKEN" || bad "launch $flag rc" "$rc $out"
   for want in 'Usage:' '--timeout' '--reason' '--issue' '--max' '--dry-run' 'GH_TOKEN' 'GITHUB_REPO' 'HERMES_REPO' 'herdr' 'tmux' 'WHAT HAPPENS' 'EXIT STATUS' 'EXAMPLES'; do
-    echo "$out" | grep -q -- "$want" && ok "launch $flag mentions $want" || bad "launch $flag missing $want" "$out"
+    say "$out" | grep -q -- "$want" && ok "launch $flag mentions $want" || bad "launch $flag missing $want" "$out"
   done
 done
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --timeout 5m --help 2>&1)
-echo "$out" | grep -q 'WHAT HAPPENS' && ok "--help wins over other flags (nothing is launched)" || bad "help with flags" "$out"
+say "$out" | grep -q 'WHAT HAPPENS' && ok "--help wins over other flags (nothing is launched)" || bad "help with flags" "$out"
 [ ! -e "$W/logs/.relaunches" ] && ok "--help writes no relaunch record" || bad "help side effect" "$(cat "$W/logs/.relaunches")"
 
 # --- symlinked install: PATH symlink resolves back to the harness ---
 mkdir -p "$tmp/linkbin"; ln -s "$BIN/hermes-launch" "$tmp/linkbin/hermes-launch"
 out=$(cd "$W" && GH_TOKEN=x PATH="$tmp/linkbin:$PATH" hermes-launch --dry-run 2>&1)
-echo "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "works through a PATH symlink" || bad "symlink" "$out"
+say "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "works through a PATH symlink" || bad "symlink" "$out"
 
 # --- hermes-run with stubbed hermes/bd/docker ---
 cat > "$tmp/bin/docker" <<'S'
@@ -192,7 +201,7 @@ runit() { (cd "$W" && PATH="$tmp/bin:$PATH" "$@"); }
 if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need python3 (watchdog, tsfilter)"; else
   # repo + logs come from the CURRENT directory, not the harness
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
-  echo "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin (ssh url)" || bad "derive ssh" "$out"
+  say "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin (ssh url)" || bad "derive ssh" "$out"
   ls "$W"/logs/run-*.log >/dev/null 2>&1 && [ ! -d "$ROOT/logs" ] && ok "logs written in the target repo, not the harness" || bad "log location" "$(ls "$W" "$ROOT")"
   [ $rc -eq 0 ] && ok "clean run exits 0" || bad "clean rc" "$rc $out"
   grep -q '^hermes chat .*--pass-session-id' "$STUB_LOG" && ok "hermes gets --pass-session-id (for Hermes-Session in the PR)" || bad "pass-session-id" "$(grep '^hermes' "$STUB_LOG")"
@@ -200,7 +209,7 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   # lock: a live pid holding the lock blocks a second instance
   mkdir -p "$W/logs/.run-beads.lock"; echo $$ > "$W/logs/.run-beads.lock/pid"
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
-  [ $rc -eq 3 ] && echo "$out" | grep -q 'already running' && ok "second instance refused by lock" || bad "lock" "$rc $out"
+  [ $rc -eq 3 ] && say "$out" | grep -q 'already running' && ok "second instance refused by lock" || bad "lock" "$rc $out"
   rm -rf "$W/logs/.run-beads.lock"
   # hang first call; no retry -> TIMEOUT, claim released, RUN_RESULT line written
   : > "$STUB_LOG"; rm -f "$STUB_COUNT"
@@ -215,13 +224,13 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   # retry-on-timeout: second attempt (bigger timeout) completes
   rm -f "$W"/logs/run-*.log "$STUB_COUNT"; : > "$STUB_LOG"
   out=$(STUB_HANG_FIRST=1 RUN_TIMEOUT=1s HERMES_RETRY_ON_TIMEOUT=1 runit "$BIN/hermes-run" 1 2>&1); rc=$?
-  [ $rc -eq 0 ] && echo "$out" | grep -q 'retrying the issue once' && echo "$out" | grep -q 'FINAL_RESULT=OK_DONE' && ok "retry-on-timeout recovers" || bad "retry" "$rc $out"
+  [ $rc -eq 0 ] && say "$out" | grep -q 'retrying the issue once' && say "$out" | grep -q 'FINAL_RESULT=OK_DONE' && ok "retry-on-timeout recovers" || bad "retry" "$rc $out"
   [ ! -d "$W/logs/.run-beads.lock" ] && ok "lock released on exit" || bad "lock cleanup"
   # URL styles
   for url in https://github.com/acme/widgets.git https://github.com/acme/widgets; do
     git -C "$W" remote set-url origin "$url"
     out=$(runit "$BIN/hermes-run" 1 2>&1)
-    echo "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin ($url)" || bad "derive $url" "$out"
+    say "$out" | grep -q '== repo: acme/widgets ' && ok "repo derived from origin ($url)" || bad "derive $url" "$out"
   done
   # timestamped twin log, RUN_TIME summaries, raw log unchanged
   . "$HERE/run_timestamps_tests.sh"
@@ -242,13 +251,13 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
-  [ $rc -ne 0 ] && echo "$out" | grep -q 'GITHUB_REPO' && ok "no origin and no GITHUB_REPO -> clear error" || bad "no origin" "$rc $out"
+  [ $rc -ne 0 ] && say "$out" | grep -q 'GITHUB_REPO' && ok "no origin and no GITHUB_REPO -> clear error" || bad "no origin" "$rc $out"
 fi
 # --- hermes-review: CLI wrapper + Python unit tests (pytest via uv; skipped without uv) ---
 out=$("$BIN/hermes-review" --help 2>&1)
-echo "$out" | grep -q 'reviewer agent for Hermes PRs' && ok "hermes-review --help" || bad "review help" "$out"
+say "$out" | grep -q 'reviewer agent for Hermes PRs' && ok "hermes-review --help" || bad "review help" "$out"
 out=$(cd "$tmp" && "$BIN/hermes-review" --dry-run 2>&1); rc=$?
-[ $rc -eq 2 ] && echo "$out" | grep -q 'not inside a git repo' && ok "hermes-review outside a repo -> exit 2" || bad "review no repo" "$rc $out"
+[ $rc -eq 2 ] && say "$out" | grep -q 'not inside a git repo' && ok "hermes-review outside a repo -> exit 2" || bad "review no repo" "$rc $out"
 if command -v uv >/dev/null 2>&1; then
   out=$(cd "$ROOT" && PYTHONPATH="$ROOT/lib" PYTHONDONTWRITEBYTECODE=1 uv run -q --no-project \
         --python 3.12 --with pytest python -m pytest -q -p no:cacheprovider tests/py 2>&1); rc=$?

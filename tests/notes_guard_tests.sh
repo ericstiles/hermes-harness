@@ -14,7 +14,7 @@ ng_payload() { # <tool_name> <command> -> the stdin JSON Hermes sends
 ng_blocks() { # <name> <command>
   local out rc
   out=$(ng_payload terminal "$2" | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null); rc=$?
-  [ $rc -eq 0 ] && echo "$out" | grep -q '"decision": "block"' && echo "$out" | grep -q -- '--append-notes' \
+  [ $rc -eq 0 ] && say "$out" | grep -q '"decision": "block"' && say "$out" | grep -q -- '--append-notes' \
     && ok "notes guard: blocks $1" || bad "notes guard: blocks $1" "rc=$rc $out"
 }
 ng_allows() { # <name> <command> [tool]
@@ -57,7 +57,7 @@ grep -q 'no `@file`' "$TPL" && ok "template: no @file on bd flags" || bad "templ
   || bad "template: verify step" "$(grep -c 'verify with `bd show' "$TPL")"
 
 out=$(printf 'not json' | HERMES_HARNESS_RUN=1 "$NG" 2>&1 >/dev/null); rc=$?
-[ $rc -eq 0 ] && echo "$out" | grep -q 'bd_notes_guard' && ok "notes guard: malformed payload fails open with a log line" \
+[ $rc -eq 0 ] && say "$out" | grep -q 'bd_notes_guard' && ok "notes guard: malformed payload fails open with a log line" \
   || bad "notes guard: malformed payload" "rc=$rc $out"
 out=$(printf '{"tool_name":"terminal","tool_input":null}' | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null); rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && ok "notes guard: missing tool_input is allowed" || bad "notes guard: no tool_input" "rc=$rc $out"

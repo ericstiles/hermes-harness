@@ -15,7 +15,7 @@ fresh; STUB_FIXTURE="$FX/ok_done.log" STUB_CONTAINERS=c1 runit "$BIN/hermes-run"
 fresh
 out=$(STUB_FIXTURE="$FX/ok_done.log" STUB_CONTAINERS=c1 STUB_DIRTY='diff --git a/t.py b/t.py' runit "$BIN/hermes-run" --clean 1 2>&1); rc=$?
 p=$(ls "$W"/logs/sandbox-dirty-*.patch 2>/dev/null)
-[ -n "$p" ] && grep -q '^diff --git a/t.py' "$p" && echo "$out" | grep -q "saved uncommitted work" \
+[ -n "$p" ] && grep -q '^diff --git a/t.py' "$p" && say "$out" | grep -q "saved uncommitted work" \
   && ok "clean: uncommitted sandbox work is saved to logs/sandbox-dirty-*.patch" || bad "clean: patch" "$(ls "$W/logs") $out"
 grep -q '^docker ps -a --filter ancestor=stub' "$STUB_LOG" && ok "clean: the container is found by the configured sandbox image" || bad "clean: image filter" "$(grep '^docker ps' "$STUB_LOG")"
 first=$(execs | grep -n 'git diff HEAD' | cut -d: -f1); reset=$(execs | grep -n 'origin/main' | cut -d: -f1)
@@ -36,14 +36,14 @@ grep -q '^docker start c1' "$STUB_LOG" && ok "clean: a stopped sandbox container
 # no workspace yet: nothing to reset, not an error
 fresh
 out=$(STUB_FIXTURE="$FX/ok_done.log" STUB_CONTAINERS=c1 STUB_WS=0 runit "$BIN/hermes-run" --clean 1 2>&1); rc=$?
-[ $rc -eq 0 ] && ! execs | grep -q 'origin/main' && echo "$out" | grep -q 'clone it fresh' \
+[ $rc -eq 0 ] && ! execs | grep -q 'origin/main' && say "$out" | grep -q 'clone it fresh' \
   && ok "clean: a missing workspace is reported and the run continues" || bad "clean: no workspace" "$rc $out"
 
 # refusals: never guess which container, never run on a failed reset
 for case_ in "none::0" "two:c1 c2:2"; do
   label=${case_%%:*}; rest=${case_#*:}; ids=${rest%:*}
   fresh; out=$(STUB_FIXTURE="$FX/ok_done.log" STUB_CONTAINERS="$ids" runit "$BIN/hermes-run" --clean 1 2>&1); rc=$?
-  [ $rc -eq 2 ] && [ "$(chats)" = 0 ] && echo "$out" | grep -q 'expected one sandbox container' && [ -z "$(execs)" ] \
+  [ $rc -eq 2 ] && [ "$(chats)" = 0 ] && say "$out" | grep -q 'expected one sandbox container' && [ -z "$(execs)" ] \
     && ok "clean: $label matching containers -> exit 2, nothing reset, no run" || bad "clean: $label containers" "$rc $out"
 done
 fresh
@@ -57,7 +57,7 @@ fresh; out=$(runit "$BIN/hermes-run" --clena 2>&1); rc=$?
 
 # hermes-launch passes --clean through
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --clean --dry-run 2>&1)
-echo "$out" | grep -q "hermes-run' --clean 10" && ok "launch --clean passes the flag to hermes-run" || bad "launch --clean" "$out"
+say "$out" | grep -q "hermes-run' --clean 10" && ok "launch --clean passes the flag to hermes-run" || bad "launch --clean" "$out"
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --help 2>&1)
-echo "$out" | grep -q -- '--clean' && ok "launch --help documents --clean" || bad "launch help --clean" "$out"
+say "$out" | grep -q -- '--clean' && ok "launch --help documents --clean" || bad "launch help --clean" "$out"
 rm -rf "$W/logs"

@@ -28,6 +28,7 @@ lib/classify.sh pattern matches. Python 3.9+, stdlib only.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -50,6 +51,11 @@ SAFE_MODEL = re.compile(r"[A-Za-z0-9._:/@+-]{1,120}")
 CACHE_LINE = re.compile(r"^\s+(?P<key>\S+?)@\S+:\s*(?P<value>[0-9]+)\s*$")
 LOOKUP_TIMEOUT = 5.0
 DEFAULT_OLLAMA = "http://127.0.0.1:11434"
+# A window lookup that fails in any of these ways just means "this source does not know".
+LOOKUP_ERRORS = (
+    OSError, ValueError, TypeError, KeyError, AttributeError,
+    subprocess.SubprocessError, http.client.HTTPException,
+)  # fmt: skip
 USAGE = """usage: context_usage.py [--window N] [--model M] < SESSION_EXPORT_JSON
   --window N   context window in tokens (otherwise looked up; never guessed)
   --model M    model name for the window lookup (default: the export's model)
@@ -102,7 +108,8 @@ def parse_export(text: str) -> Usage:
 
 def _positive(text: str | None) -> int | None:
     value = (text or "").strip()
-    return int(value) if value.isdigit() and int(value) > 0 else None
+    # ASCII only: str.isdigit() accepts '²', which int() rejects
+    return int(value) if value.isascii() and value.isdigit() and int(value) > 0 else None
 
 
 def window_from_cache(text: str, model: str) -> int | None:
@@ -136,7 +143,7 @@ def resolve_window(
         reasons.append("no --window")
     try:
         size = _positive(config_lookup())
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except LOOKUP_ERRORS:
         size = None
     if size:
         return Window(size, "hermes config model.context_length")
@@ -147,7 +154,7 @@ def resolve_window(
     reasons.append("no context_length_cache entry")
     try:
         size = ollama_lookup(model) if model != "unknown" else None
-    except (OSError, ValueError):
+    except LOOKUP_ERRORS:
         size = None
     if size:
         return Window(size, "ollama /api/ps")
@@ -184,16 +191,18 @@ def ollama_ps_context_length(model: str, host: str) -> int | None:
     """context_length of a LOADED model from Ollama /api/ps (local, read-only)."""
     with urllib.request.urlopen(f"{host.rstrip('/')}/api/ps", timeout=LOOKUP_TIMEOUT) as resp:
         data = json.load(resp)
-    for entry in data.get("models", []) if isinstance(data, dict) else []:
+    models = data.get("models") if isinstance(data, dict) else None
+    for entry in models if isinstance(models, list) else []:
         if isinstance(entry, dict) and model in (entry.get("name"), entry.get("model")):
             return _positive(str(entry.get("context_length", "")))
     return None
 
 
 def _arg(argv: list[str], name: str) -> str | None:
+    """The flag's value; '' when the flag is last with no value; None when absent."""
     for i, item in enumerate(argv):
-        if item == name and i + 1 < len(argv):
-            return argv[i + 1]
+        if item == name:
+            return argv[i + 1] if i + 1 < len(argv) else ""
         if item.startswith(name + "="):
             return item[len(name) + 1 :]
     return None
@@ -202,6 +211,9 @@ def _arg(argv: list[str], name: str) -> str | None:
 def main(argv: list[str], stdin: TextIO, stdout: TextIO, environ: dict[str, str]) -> int:
     try:
         usage = parse_export(stdin.read())
+    except UnicodeDecodeError:  # its message quotes input bytes: use a fixed reason
+        stdout.write(f"{PREFIX} unavailable (not UTF-8)\n")
+        return 0
     except ValueError as exc:
         stdout.write(f"{PREFIX} unavailable ({exc})\n")
         return 0

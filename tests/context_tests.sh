@@ -100,7 +100,11 @@ rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
 log=$(ctx_log)
 eq "context: baseline failure prints 'baseline unavailable' and the run continues" \
-  "$rc|$(head -n 1 "$log")|$(tail -n 1 "$log")" "0|CONTEXT: baseline unavailable (empty input)|RUN_RESULT=OK_DONE"
+  "$rc|$(head -n 1 "$log")|$(tail -n 1 "$log")" "0|CONTEXT: baseline unavailable (hermes prompt-size exited 1)|RUN_RESULT=OK_DONE"
+eq "context: a failing prompt-size names its exit code" "$(head -n 1 "$log")" "CONTEXT: baseline unavailable (hermes prompt-size exited 1)"
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"; : > "$tmp/ctx-empty.json"
+out=$(STUB_PROMPT_SIZE="$tmp/ctx-empty.json" runit "$BIN/hermes-run" 1 2>&1); log=$(ctx_log)
+eq "context: prompt-size that succeeds with no output is 'empty input'" "$(head -n 1 "$log")" "CONTEXT: baseline unavailable (empty input)"
 
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"; began=$(date +%s)
 out=$(STUB_PROMPT_SIZE_HANG=1 HERMES_BASELINE_TIMEOUT=1s runit "$BIN/hermes-run" 1 2>&1); rc=$?
@@ -118,4 +122,21 @@ for f in timeout_killed blocked queue_empty model_api_error beads_sync auth_erro
   done
 done
 eq "context: all 11 classifier fixtures classify identically with a baseline line first" "$same" "$total"
+
+# --- resumed / wrap-up runs skip the fresh-session baseline (0af) ---
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
+out=$(STUB_HANG_FIRST=1 STUB_SESSIONS=1 STUB_FIXTURE_2="$FX/wrapup_saved.log" STUB_PROMPT_SIZE="$tmp/ctx-ps.json" RUN_TIMEOUT=1s \
+      runit "$BIN/hermes-run" 1 2>&1)
+first=$(ls -t "$W"/logs/run-*.log | tail -n 1); wrap=$(ls -t "$W"/logs/run-*.log | head -n 1)
+[ "$first" != "$wrap" ] && head -n 1 "$first" | grep -q '^CONTEXT: baseline ' && ! grep -q '^CONTEXT: baseline' "$wrap" \
+  && [ "$(grep -c '^hermes prompt-size' "$STUB_LOG")" = 1 ] \
+  && ok "context: a resumed run logs no baseline line" \
+  || bad "context: a resumed run logs no baseline line" "$(head -n 1 "$first") / $(head -n 1 "$wrap") / $(grep -c '^hermes prompt-size' "$STUB_LOG") calls"
+
+# --- docs and repo hygiene ---
+for v in HERMES_CONTEXT_TIMEOUT HERMES_BASELINE_TIMEOUT HERMES_CONTEXT_WINDOW; do
+  grep -q "\`$v\`" "$ROOT/README.md" && ok "docs: README lists $v" || bad "docs: README lists $v" "missing"
+done
+git -C "$ROOT" -c core.excludesFile=/dev/null check-ignore -q .beads/issues.jsonl \
+  && ok "repo: .beads/issues.jsonl is ignored by the repo itself" || bad "repo: issues.jsonl ignore" "not in .beads/.gitignore"
 rm -rf "$W/logs" "$tmp"/ctx-*

@@ -1,5 +1,7 @@
 """Unit tests for lib/context_usage.py (session token usage -> CONTEXT: lines, bead 39w.1)."""
 
+import http.client
+import io
 import json
 import re
 import subprocess
@@ -154,3 +156,67 @@ def test_unsafe_model_name_is_not_echoed() -> None:
     line = cu.context_line(usage, cu.Window(None, "unknown (test)"))
     assert "model=unknown" in line
     assert SECRET not in line and "\n" not in line
+
+
+# --- bead hermes-harness-aju: odd inputs must not lose the usage counts ---
+
+
+@pytest.fixture
+def no_real_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() without calling hermes or Ollama."""
+    monkeypatch.setattr(cu, "hermes_config_context_length", lambda: None)
+    monkeypatch.setattr(cu, "read_cache", lambda environ: None)
+    monkeypatch.setattr(cu, "ollama_ps_context_length", lambda model, host: None)
+
+
+def _main(argv: list[str], stdin: str) -> str:
+    out = io.StringIO()
+    assert cu.main(argv, io.StringIO(stdin), out, {}) == 0
+    return out.getvalue()
+
+
+def test_unicode_digit_window_is_ignored_with_reason(no_real_lookups: None) -> None:
+    window = cu.resolve_window("²", "qwen3.8:27b-mlx", **_no_lookups())
+    assert window.tokens is None
+    assert "--window is not a positive integer" in window.source
+    line = _main(["--window", "²"], _export())
+    assert line.startswith("CONTEXT: used cumulative in=49060 ")
+    assert "--window is not a positive integer" in line
+
+
+@pytest.mark.parametrize(
+    "error", [http.client.HTTPException("bad status"), TypeError("NoneType"), KeyError("x")]
+)
+def test_ollama_http_or_shape_error_falls_through(error: Exception) -> None:
+    def broken(model: str) -> int:
+        raise error
+
+    lookups = {"config_lookup": lambda: None, "cache_text": None, "ollama_lookup": broken}
+    window = cu.resolve_window(None, "qwen3.8:27b-mlx", **lookups)
+    assert window.tokens is None
+    assert "ollama has no context_length for the model" in window.source
+
+
+@pytest.mark.parametrize("payload", [b'{"models": null}', b"[1, 2]", b'{"models": [7, null]}'])
+def test_ollama_unexpected_shape_is_no_window(
+    monkeypatch: pytest.MonkeyPatch, payload: bytes
+) -> None:
+    monkeypatch.setattr(cu.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(payload))
+    assert cu.ollama_ps_context_length("qwen3.8:27b-mlx", "http://127.0.0.1:11434") is None
+
+
+def test_non_utf8_input_reason_is_fixed_text() -> None:
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "--window", "1000"],
+        input=b'{"content": "\xff\xfe ' + SECRET.encode() + b'"}\n',
+        capture_output=True, timeout=30, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0
+    assert done.stdout == b"CONTEXT: unavailable (not UTF-8)\n"
+
+
+def test_window_flag_without_value_reports_not_positive(no_real_lookups: None) -> None:
+    line = _main(["--window"], _export())
+    assert line.startswith("CONTEXT: used cumulative in=49060 ")
+    assert "--window is not a positive integer" in line
+    assert "no --window" not in line

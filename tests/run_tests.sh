@@ -156,6 +156,11 @@ cat > "$tmp/bin/hermes" <<'S'
 echo "hermes $*" >> "$STUB_LOG"
 # sessions list: STUB_SESSIONS=1 shows a harness session started now, plus an older harness
 # session and a newer-sorting unrelated chat that must both be ignored
+# sessions export: prints $STUB_EXPORT (a canned `hermes sessions export` JSON line) if set
+if [ "$1 $2" = "sessions export" ]; then
+  [ -n "$STUB_EXPORT" ] && cat "$STUB_EXPORT"
+  exit 0
+fi
 if [ "$1" = sessions ]; then
   [ "${STUB_SESSIONS:-0}" = 1 ] || exit 0
   now=$(date +%Y%m%d_%H%M%S)
@@ -177,6 +182,9 @@ if [ "$n" = 1 ] && [ -n "$STUB_WRITES" ]; then
   while [ "$k" -lt "$2" ]; do echo "  ┊ ✍️  write     $1  0.1s"; sleep 0.4; k=$((k+1)); done
 fi
 echo "PR https://github.com/o/r/pull/1"; echo; echo "Resume this session with:"; echo "Messages:       9 (1 user, 8 tool calls)"
+# STUB_SID: the exit footer names the session, as real Hermes does
+[ -n "$STUB_SID" ] && echo "Session:        $STUB_SID"
+exit 0
 S
 chmod +x "$tmp/bin/"*
 export STUB_LOG="$tmp/stub.log" STUB_COUNT="$tmp/count" GH_TOKEN=x
@@ -229,6 +237,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/watchdog_tests.sh"
   # --clean: reset the sandbox workspace to origin/main, saving uncommitted work first
   . "$HERE/sandbox_clean_tests.sh"
+  # session token usage -> one CONTEXT: line before RUN_RESULT (lib/context_usage.py)
+  . "$HERE/context_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

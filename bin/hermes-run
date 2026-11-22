@@ -30,6 +30,7 @@
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
 #   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
+#   HERMES_CONTEXT_TIMEOUT=30s   time limit for the session export behind the CONTEXT: line
 #   HERMES_CONTEXT_WINDOW=N      context window for the CONTEXT: line (default: looked up from Hermes
 #                                config, its context_length_cache, then Ollama; never guessed)
 #   HERMES_STALL_WARN=10m        print "no output for 10m (last: HH:MM:SS)" to the terminal and
@@ -260,13 +261,21 @@ run_session() { local s; s=$(session_id "$log"); [ -n "$s" ] || s=$(hh_find_sess
 # counts, no %, since Hermes keeps no per-call prompt size. The export is piped, never written
 # to disk. Always exactly one CONTEXT: line and exit 0: it must never change a run's result.
 context_line() { # <session-id>
-  local out
+  local out export_json rc limit=${HERMES_CONTEXT_TIMEOUT:-30s}
   if [ -z "$1" ]; then
     echo "CONTEXT: unavailable (no session found: no Session: footer and no harness session in hermes sessions list)"
     return 0
   fi
+  # A stuck Hermes CLI must not hold up the loop: the watchdog (no extensions) stops the export
+  # at $limit and exits 124. Its own WATCHDOG: note goes to this variable, never to the logs.
+  export_json=$(python3 "$WATCHDOG" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
+                hermes sessions export --session-id "$1" - 2>/dev/null); rc=$?
+  if [ "$rc" = 124 ]; then
+    echo "CONTEXT: unavailable (export timed out after $limit)"
+    return 0
+  fi
   # shellcheck disable=SC2086  # the optional --window pair is intentionally word-split
-  out=$(hermes sessions export --session-id "$1" - 2>/dev/null \
+  out=$(printf '%s\n' "$export_json" \
         | python3 "$HARNESS_HOME/lib/context_usage.py" ${HERMES_CONTEXT_WINDOW:+--window $HERMES_CONTEXT_WINDOW} 2>/dev/null \
         | head -n 1)
   case $out in

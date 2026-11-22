@@ -22,6 +22,9 @@ push-state.json
 # Credential key (encryption key for federation peer auth — never commit)
 .beads-credential-key
 
+# JSONL auto-export for viewers such as bv (config.yaml export:); regenerated, never committed
+issues.jsonl
+
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 

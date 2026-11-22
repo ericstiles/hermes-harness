@@ -15,7 +15,7 @@ from pr_review.gate import GateOutput, RebaseConflict, checkout, fetch, run_gate
 from pr_review.meta import BeadMismatch, resolve_bead
 from pr_review.pr_env import pr_environment
 from pr_review.progress import step
-from pr_review.services import Beads, GitHub, PullRequest, desktop_notify
+from pr_review.services import REFUSED_NOTE, Beads, GitHub, PullRequest, desktop_notify
 from pr_review.shell import Runner, must, run
 from pr_review.verdict import (
     MARKER_PREFIX,
@@ -76,8 +76,21 @@ def _refuse(ctx: Context, pr: PullRequest, reason: str) -> str:
     digest = hashlib.sha1(reason.encode()).hexdigest()[:10]
     marker = f"<!-- {REFUSED_PREFIX}{pr.head_sha}:{digest} -->"
     if not ctx.dry_run and not ctx.github.has_marker(pr, marker):
-        ctx.github.post_review(pr, f"{marker}\n**Reviewer agent: not reviewed.** {reason}\n", False)
+        ctx.github.post_review(pr, f"{marker}\n{REFUSED_NOTE} {reason}\n", False)
+        # Same once-per-head-and-reason rule as the comment: a refused PR no longer sits
+        # unnoticed while it is re-checked every pass (gbd).
+        ctx.notify("hermes-review: PR refused", f"PR #{pr.number}: {reason}")
     return "refused"
+
+
+def refused_lines(github: GitHub) -> list[str]:
+    """One line per open bd/* PR that hermes-review refused at its current head commit."""
+    lines = []
+    for pr in github.open_bead_prs():
+        reason = github.refusal_at_head(pr)
+        if reason is not None:
+            lines.append(f"PR #{pr.number} ({pr.branch}) refused at {pr.head_sha[:7]}: {reason}")
+    return lines
 
 
 def _checks_report(ctx: Context, base: GateOutput, gate: GateOutput) -> tuple[list[Problem], str]:

@@ -72,5 +72,26 @@ mkdir -p "$tmp/nogh"; printf '#!/bin/sh\nexit 1\n' > "$tmp/nogh/gh"; chmod +x "$
 out=$(PATH="$tmp/nogh:$PATH" GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 runit "$BIN/hermes-status" 2>&1)
 say "$out" | grep -qE '^file: .*/run-[0-9-]+\.log ' && say "$out" | grep -q '^class: BLOCKED$' \
   && ok "status: latest log is the raw log, not its timed twin" || bad "status: twin" "$(say "$out" | grep -E '^(file|class):')"
+# refused PRs (bead gbd): runit puts the general stubs first, so these two put their own gh
+# ahead of them. Offline the section says unavailable and status carries on.
+out=$(cd "$W" && PATH="$tmp/nogh:$tmp/bin:$PATH" GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 "$BIN/hermes-status" 2>&1)
+say "$out" | grep -q "^== refused by hermes-review" && say "$out" | grep -q "^unavailable: hermes-review --list-refused failed" \
+  && say "$out" | grep -q "^== beads" \
+  && ok "status: refused-PR section is shown, and offline it says unavailable" \
+  || bad "status: refused section offline" "$(say "$out" | grep -A2 'refused by hermes-review')"
+# ... and with gh answering, a PR refused at its current head is listed with the reason
+mkdir -p "$tmp/refgh"; cat > "$tmp/refgh/gh" <<'GH'
+#!/bin/sh
+case "$1 $2" in
+  "pr list") echo '[{"number":47,"title":"feat(b8p.14): x","body":"","headRefName":"bd/r-b8p.14","headRefOid":"abc1234def","url":"u","isDraft":false}]' ;;
+  "pr view") printf '%s\n' '{"comments":[{"body":"<!-- pr-review-refused:abc1234def:0123456789 -->\n**Reviewer agent: not reviewed.** cannot identify the bead\n"}],"reviews":[]}' ;;
+  *) exit 1 ;;
+esac
+GH
+chmod +x "$tmp/refgh/gh"
+out=$(cd "$W" && PATH="$tmp/refgh:$tmp/bin:$PATH" GIT_ALLOW_PROTOCOL=file GIT_TERMINAL_PROMPT=0 "$BIN/hermes-status" 2>&1)
+say "$out" | grep -q '^PR #47 (bd/r-b8p.14) refused at abc1234: cannot identify the bead$' \
+  && ok "status: lists a PR refused at its current head, with the reason" \
+  || bad "status: refused PR listed" "$(say "$out" | grep -A2 'refused by hermes-review')"
 eq "supervise: latest log is the raw log, not its timed twin" "$(runit "$BIN/hermes-supervise" | sed -n 's/^CLASS=//p')" BLOCKED
 rm -rf "$W/logs"

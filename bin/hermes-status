@@ -42,6 +42,10 @@ else echo "unavailable: git not found"; fi
 hdr "pull requests"
 if have gh; then try "gh pr list" gh pr list --state all --limit "$PRS"; else echo "unavailable: gh not found"; fi
 
+hdr "refused by hermes-review (at the PR's current commit)"
+if have gh; then try "hermes-review --list-refused" "$HARNESS_HOME/bin/hermes-review" --list-refused
+else echo "unavailable: gh not found"; fi
+
 hdr "beads (local copy; not synced by this script)"
 if have bd; then
   echo "-- ready"; try "bd ready" bd ready

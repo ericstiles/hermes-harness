@@ -9,12 +9,14 @@ from dataclasses import dataclass
 from pr_review.fixes import FIXED_IN_PREFIX, HUMAN_LABEL, REVIEW_FIX_LABEL, is_fix_for, is_fixed_in
 from pr_review.meta import BRANCH_PREFIX
 from pr_review.shell import Runner, must
+from pr_review.verdict import REFUSED_PREFIX
 
 LABEL_COLOR = "d93f0b"
 # Rounds of `bd epic close-eligible`: closing a child epic can make its parent eligible.
 MAX_EPIC_ROUNDS = 10
 log = logging.getLogger("pr_review")
 
+REFUSED_NOTE = "**Reviewer agent: not reviewed.**"
 _PR_FIELDS = "number,title,body,headRefName,headRefOid,url,isDraft"
 
 
@@ -67,6 +69,18 @@ class GitHub:
         data = json.loads(must(self._run(cmd), "gh pr view").out)
         bodies = [c.get("body", "") for c in data.get("comments", []) + data.get("reviews", [])]
         return any(marker in body for body in bodies)
+
+    def refusal_at_head(self, pr: PullRequest) -> str | None:
+        """The reason of the latest hermes-review refusal for the PR's CURRENT head, else None."""
+        cmd = ["gh", "pr", "view", str(pr.number), "--json", "comments,reviews"]
+        data = json.loads(must(self._run(cmd), "gh pr view").out)
+        needle = f"{REFUSED_PREFIX}{pr.head_sha}:"
+        bodies = [c.get("body", "") for c in data.get("comments", []) + data.get("reviews", [])]
+        refusals = [b for b in bodies if needle in b]
+        if not refusals:
+            return None
+        text = refusals[-1].split(REFUSED_NOTE, 1)[-1]
+        return text.strip().splitlines()[0] if text.strip() else "(no reason given)"
 
     def post_review(self, pr: PullRequest, text: str, approve: bool) -> None:
         """Approve / request changes with the reviewer identity, else post a comment."""

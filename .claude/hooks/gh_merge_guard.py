@@ -2,22 +2,27 @@
 """Claude Code PreToolUse hook: the only PR merge allowed here is `gh pr merge <N> --rebase`.
 
 Registered in .claude/settings.json for the Bash tool. Reads the hook JSON on stdin
-({"tool_name": ..., "tool_input": {"command": ...}}). Each shell segment (split on
-&&, ||, ;, | and newlines; $(...) and `...` bodies are checked as commands too) that
-RUNS a PR merge must be exactly `gh pr merge <N> --rebase` or `gh pr merge --rebase <N>`.
-The segment is split into shell words (shlex: quotes and backslashes removed). It runs
-a merge when a separate `gh` word (any path) is followed later by the words `pr merge`,
-wherever it sits (after if/then/!, timeout, env, a VAR=value prefix, ...). A segment
-that also invokes a shell (bash/sh/zsh/eval ...) and mentions merge is blocked, since
-its merge hides inside one quoted word. Unbalanced quotes around gh + merge are blocked.
-Anything other than the exact allowed form exits 2: Claude Code refuses the command and
-shows the reason. A merge mentioned inside ONE quoted word (git commit -m '...',
-bd note '...', echo '...') is text, not a merge; an unquoted mention counts as a merge.
+({"tool_name": ..., "tool_input": {"command": ...}}).
+
+The command is tokenized once, quote-aware (shlex with shell punctuation): quotes and
+backslashes are removed, and `;`, `&&`, `||`, `|`, `&`, newlines, `(`, `)` outside quotes
+become separators, so a `|` or newline inside a quoted string stays part of its word.
+Each segment between separators that RUNS a PR merge must be exactly
+`gh pr merge <N> --rebase` or `gh pr merge --rebase <N>`. A segment runs a merge when a
+separate `gh` word (any path) is followed later by the words `pr` `merge`, wherever it
+sits (after if/then/!, timeout, env, a VAR=value prefix, inside $(...) or backticks).
+A segment that invokes a shell (bash/sh/zsh/eval ...) and has a word containing the
+whole word `merge` is blocked, since its merge hides inside one quoted word. Unbalanced
+quotes in a command that mentions gh and the word merge are blocked. Anything else
+exits 2: Claude Code refuses the command and shows the reason.
+
+Allowed: a merge mentioned inside ONE quoted word (git commit -m '...', bd note '...',
+python3 -c '...'), and words like `mergeable` (`gh pr view --json mergeable`).
+Blocked: an unquoted mention (`echo gh pr merge -s 0`).
 Not covered: gh aliases (`gh alias set`) that expand to a merge.
 
 The wildcard deny rules in settings.json stay as a second layer; the Main ruleset on
-GitHub (rebase only, no bypass) is the last one. Unreadable hook input fails closed
-when it mentions a merge, open otherwise. Python 3.9+.
+GitHub (rebase only, no bypass) is the last one. Python 3.9+.
 """
 
 from __future__ import annotations
@@ -29,9 +34,9 @@ import sys
 
 BLOCK = 2
 ALLOWED = (re.compile(r"gh pr merge [0-9]+ --rebase"), re.compile(r"gh pr merge --rebase [0-9]+"))
-MERGE = re.compile(r"\bpr\s+merge\b")
-SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n]")
-SUBSHELL_BODY = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+MERGE_WORD = re.compile(r"\bmerge\b")
+PUNCTUATION = "();<>|&\n"
+SEPARATOR_CHARS = frozenset("();|&\n")
 SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish", "eval"})
 REASON = (
     "gh_merge_guard: only `gh pr merge <N> --rebase` (or `gh pr merge --rebase <N>`) may run "
@@ -39,13 +44,28 @@ REASON = (
 )
 
 
-def _words(segment: str) -> list[str] | None:
-    """Shell words with quotes and escapes removed, or None when quoting is unbalanced."""
+def _tokens(command: str) -> list[str] | None:
+    """Shell tokens (words and punctuation runs), or None when quoting is unbalanced."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
     try:
-        words = shlex.split(segment, posix=True)
+        return list(lexer)
     except ValueError:
         return None
-    return [word.strip("(){}") for word in words if word.strip("(){}")]
+
+
+def _segments(tokens: list[str]) -> list[list[str]]:
+    """Words between separators, with grouping braces and backticks stripped."""
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token and set(token) <= SEPARATOR_CHARS:
+            segments.append([])
+            continue
+        word = token.strip("{}`")
+        if word:
+            segments[-1].append(word)
+    return [segment for segment in segments if segment]
 
 
 def _runs_merge(words: list[str]) -> bool:
@@ -58,28 +78,23 @@ def _runs_merge(words: list[str]) -> bool:
     return False
 
 
-def segment_allowed(segment: str) -> bool:
-    """False when this shell segment runs a PR merge other than the allowed form."""
-    if "merge" not in segment or "gh" not in segment:
-        return True
-    words = _words(segment)
-    if words is None:  # unbalanced quotes around something mentioning gh and merge
-        return False
-    if any(w.rsplit("/", 1)[-1] in SHELLS for w in words) and any("merge" in w for w in words):
+def segment_allowed(words: list[str]) -> bool:
+    """False when this segment runs a PR merge other than the allowed form."""
+    invokes_shell = any(word.rsplit("/", 1)[-1] in SHELLS for word in words)
+    if invokes_shell and any(MERGE_WORD.search(word) for word in words):
         return False  # bash -c '...', eval "...": the merge is inside a string
     if not _runs_merge(words):
-        return True  # only mentions a merge inside one quoted word (commit message, note)
+        return True
     return any(pattern.fullmatch(" ".join(words)) for pattern in ALLOWED)
 
 
 def is_allowed(command: str) -> bool:
-    if "merge" not in command or "gh" not in command:
+    if not MERGE_WORD.search(command) or "gh" not in command:
         return True
-    for match in SUBSHELL_BODY.finditer(command):
-        body = match.group(1) if match.group(1) is not None else match.group(2)
-        if not is_allowed(body):
-            return False
-    return all(segment_allowed(segment) for segment in SEGMENT_SPLIT.split(command))
+    tokens = _tokens(command)
+    if tokens is None:  # unbalanced quotes in a command mentioning gh and merge
+        return False
+    return all(segment_allowed(words) for words in _segments(tokens))
 
 
 def command_from(raw: str) -> str | None:
@@ -100,8 +115,8 @@ def command_from(raw: str) -> str | None:
 def main() -> int:
     raw = sys.stdin.read()
     command = command_from(raw)
-    if command is None:  # unreadable: fail closed if it mentions a merge at all
-        return BLOCK if MERGE.search(raw) else 0
+    if command is None:  # unreadable: fail closed if it mentions gh and the word merge
+        return BLOCK if MERGE_WORD.search(raw) and "gh" in raw else 0
     if is_allowed(command):
         return 0
     sys.stderr.write(REASON % " ".join(command.split())[:200] + "\n")

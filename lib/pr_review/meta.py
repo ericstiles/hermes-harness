@@ -24,7 +24,22 @@ def resolve_bead(branch: str, title: str, body: str) -> str:
     body_match = _BODY.search(body)
     if body_match is None:
         raise BeadMismatch("body has no 'Bead: <id>' line")
-    ids = {from_branch, title_match.group(1), body_match.group(1)}
-    if len(ids) != 1:
-        raise BeadMismatch(f"branch, title and body disagree: {sorted(ids)}")
-    return from_branch
+    return _same_bead(from_branch, title_match.group(1), body_match.group(1))
+
+
+def _same_bead(*ids: str) -> str:
+    """The one bead the ids name, as its full id; BeadMismatch when they name different ones.
+
+    A bead id is `<prefix>-<id part>`; the prefix may contain hyphens, the id part never does.
+    An agent sometimes writes only the id part (`b8p.14` for `myrepo-b8p.14`), so a short id
+    (no hyphen) matches a full id whose part after the last hyphen equals it. Full ids must be
+    identical: a different prefix is a different bead.
+    """
+    full = {i for i in ids if "-" in i}
+    if len(full) > 1:
+        raise BeadMismatch(f"branch, title and body disagree: {sorted(set(ids))}")
+    canonical = full.pop() if full else ids[0]
+    short_form = canonical.rsplit("-", 1)[-1]
+    if any(i not in (canonical, short_form) for i in ids):
+        raise BeadMismatch(f"branch, title and body disagree: {sorted(set(ids))}")
+    return canonical

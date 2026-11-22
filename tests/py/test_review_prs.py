@@ -34,6 +34,52 @@ def test_bead_id_mismatch_is_rejected(branch: str, title: str, body: str, reason
         resolve_bead(branch, title, body)
 
 
+# --- bead hermes-harness-qu3: a short id (no repo prefix) names the same bead ---
+
+
+@pytest.mark.parametrize(
+    ("branch", "title", "body"),
+    [
+        (
+            "bd/myrepo-b8p.14",
+            "feat(b8p.14): x",
+            "Bead: myrepo-b8p.14",
+        ),  # the real case: short title
+        ("bd/myrepo-b8p.14", "feat(myrepo-b8p.14): x", "Bead: b8p.14"),
+        ("bd/b8p.14", "feat(myrepo-b8p.14): x", "Bead: myrepo-b8p.14"),
+        ("bd/myrepo-b8p.14", "feat(b8p.14): x", "Bead: b8p.14"),
+    ],
+)
+def test_short_title_id_matches_prefixed_branch_and_body(
+    branch: str, title: str, body: str
+) -> None:
+    assert resolve_bead(branch, title, body) == "myrepo-b8p.14"
+
+
+def test_short_id_matches_a_prefix_that_contains_hyphens() -> None:
+    assert resolve_bead("bd/my-big-repo-xw2.1", "fix(xw2.1): x", "Bead: my-big-repo-xw2.1") == (
+        "my-big-repo-xw2.1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("branch", "title", "body"),
+    [
+        ("bd/myrepo-b8p.14", "feat(b8p.15): x", "Bead: myrepo-b8p.14"),  # short id, other issue
+        ("bd/myrepo-b8p.14", "feat(other-b8p.14): x", "Bead: myrepo-b8p.14"),  # other prefix
+        ("bd/myrepo-b8p.14", "feat(b8p.1): x", "Bead: myrepo-b8p.14"),  # not a suffix match
+        ("bd/myrepo-b8p.14", "feat(p.14): x", "Bead: myrepo-b8p.14"),  # tail, not the id part
+    ],
+)
+def test_different_ids_still_disagree(branch: str, title: str, body: str) -> None:
+    with pytest.raises(BeadMismatch, match="disagree"):
+        resolve_bead(branch, title, body)
+
+
+def test_all_short_ids_agree_without_a_prefix() -> None:
+    assert resolve_bead("bd/b8p.14", "feat(b8p.14): x", "Bead: b8p.14") == "b8p.14"
+
+
 MAIN_RUFF = """\
 src/organize_music/naming.py:3:1: I001 [*] Import block is un-sorted or un-formatted
 tests/test_naming.py:26:101: E501 Line too long (118 > 100)

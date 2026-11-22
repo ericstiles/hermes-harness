@@ -36,6 +36,8 @@ eq "supervise --classify needs no repo" "$(cd "$tmp" && "$BIN/hermes-supervise" 
 . "$HERE/setup_tests.sh"
 # --- every runnable script answers -h / --help ---
 . "$HERE/help_tests.sh"
+# --- Claude Code merge guard hook: only `gh pr merge <N> --rebase` (.claude/hooks/gh_merge_guard.py) ---
+. "$HERE/merge_guard_tests.sh"
 
 # --- supervise: output contract, read-only, no secrets ---
 sup() { (cd "$W" && "$BIN/hermes-supervise" "$@"); }

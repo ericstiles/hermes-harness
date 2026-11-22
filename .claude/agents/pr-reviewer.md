@@ -54,8 +54,8 @@ end with `failed=0`. Any failure is a blocking problem: quote the lines from
 
 ## 4. Review the diff
 
-`git -C "$tree" diff --stat origin/main...HEAD` and
-`git -C "$tree" diff origin/main...HEAD`. Read changed files in full where
+`git -C <tree> diff --stat origin/main...HEAD` and
+`git -C <tree> diff origin/main...HEAD`. Read changed files in full where
 the diff is not enough.
 
 Judge it by the criteria in `main`'s copy of the reviewer rules

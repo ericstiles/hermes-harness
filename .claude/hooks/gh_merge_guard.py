@@ -13,16 +13,21 @@ separate `gh` word (any path) is followed later by the words `pr` `merge`, where
 sits (after if/then/!, timeout, env, a VAR=value prefix, inside $(...) or backticks).
 A segment that invokes a shell (bash/sh/zsh/eval ...) and has a word containing the
 whole word `merge` is blocked, since its merge hides inside one quoted word. Unbalanced
-quotes in a command that mentions gh and the word merge are blocked. Anything else
-exits 2: Claude Code refuses the command and shows the reason.
+quotes in a command that mentions gh and the word merge are blocked. shlex does not
+expand `$x`, `$'...'`, `$(...)` or backticks, so in a command that mentions gh and the
+whole word merge, a segment that runs gh (or starts with an expansion such as `$G`) and
+contains any `$` or backtick is blocked without trying to work out what it expands to.
+Anything else exits 2: Claude Code refuses the command and shows the reason.
 
 Allowed: a merge mentioned inside ONE quoted word (git commit -m '...', bd note '...',
 python3 -c '...'), and words like `mergeable` (`gh pr view --json mergeable`).
 Blocked: an unquoted mention (`echo gh pr merge -s 0`).
 Not covered: gh aliases (`gh alias set`) that expand to a merge.
 
-The wildcard deny rules in settings.json stay as a second layer; the Main ruleset on
-GitHub (rebase only, no bypass) is the last one. Python 3.9+.
+This hook is BEST-EFFORT: matching text cannot fully model the shell (e.g. a merge
+built from pieces that never spell `merge`, or a gh alias). The real enforcement is the
+Main ruleset on GitHub (rebase only, no bypass); the wildcard deny rules in settings.json
+are a second layer. Python 3.9+.
 """
 
 from __future__ import annotations
@@ -49,6 +54,7 @@ def _tokens(command: str) -> list[str] | None:
     lexer = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
+    lexer.commenters = ""  # bash starts a comment only at a word start; `a#b` is one word
     try:
         return list(lexer)
     except ValueError:
@@ -68,10 +74,19 @@ def _segments(tokens: list[str]) -> list[list[str]]:
     return [segment for segment in segments if segment]
 
 
+def _is_gh(word: str) -> bool:
+    """`gh`, any path to it, or `$'gh'` (shlex keeps the `$` of ANSI-C quoting)."""
+    return word.lstrip("$").rsplit("/", 1)[-1] == "gh"
+
+
+def _has_expansion(word: str) -> bool:
+    return "$" in word or "`" in word
+
+
 def _runs_merge(words: list[str]) -> bool:
     """True when a separate `gh` word is followed (anywhere later) by `pr` `merge`."""
     for i, word in enumerate(words):
-        if word.rsplit("/", 1)[-1] == "gh":
+        if _is_gh(word):
             rest = words[i + 1 :]
             if any(rest[j : j + 2] == ["pr", "merge"] for j in range(len(rest) - 1)):
                 return True
@@ -79,10 +94,15 @@ def _runs_merge(words: list[str]) -> bool:
 
 
 def segment_allowed(words: list[str]) -> bool:
-    """False when this segment runs a PR merge other than the allowed form."""
+    """False when this segment runs a PR merge other than the allowed form.
+
+    Only called for commands that mention gh and the whole word merge."""
     invokes_shell = any(word.rsplit("/", 1)[-1] in SHELLS for word in words)
     if invokes_shell and any(MERGE_WORD.search(word) for word in words):
         return False  # bash -c '...', eval "...": the merge is inside a string
+    runs_gh = any(_is_gh(word) for word in words) or _has_expansion(words[0])
+    if runs_gh and any(_has_expansion(word) for word in words):
+        return False  # $x, $'...', $(...), `...`: shlex cannot see what the shell expands
     if not _runs_merge(words):
         return True
     return any(pattern.fullmatch(" ".join(words)) for pattern in ALLOWED)

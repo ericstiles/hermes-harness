@@ -117,12 +117,18 @@ def segment_allowed(words: list[str]) -> bool:
     return any(pattern.fullmatch(" ".join(words)) for pattern in ALLOWED)
 
 
+def _mentions_merge(text: str) -> bool:
+    return "gh" in text and MERGE_WORD.search(text) is not None
+
+
 def is_allowed(command: str) -> bool:
-    if not MERGE_WORD.search(command) or "gh" not in command:
-        return True
     tokens = _tokens(command)
-    if tokens is None:  # unbalanced quotes in a command mentioning gh and merge
-        return False
+    if tokens is None:  # unbalanced quotes: judge the raw text, fail closed
+        return not _mentions_merge(command)
+    # Check the words AFTER quote/backslash removal too: g''h, g\h, me''rge, merg\e
+    # spell gh / merge only once the shell (and shlex) has removed them.
+    if not _mentions_merge(command) and not _mentions_merge(" ".join(tokens)):
+        return True
     return all(segment_allowed(words) for words in _segments(tokens))
 
 

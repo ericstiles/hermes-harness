@@ -25,6 +25,8 @@ for cmd in "gh pr merge -s 4" "gh pr merge 4 -ds" "gh pr merge 4 -s" "gh pr merg
            "g''h pr merge 5 -s" "g\\h pr merge 5 -s" "/usr/bin/g''h pr merge 5 --squash" \
            "gh pr me''rge 5 -s" "gh pr merg\\e 5 -s" "g\"\"h pr m\"\"erge 5 -s" \
            $'gh pr me\\\nrge 5 -s' $'g\\\nh pr merge 5 -s' $'gh pr "me\\\nrge" 5 -s' \
+           "echo 'gh pr merge 5 -s' | sh" "printf '%s\\n' 'gh pr merge 5 --squash' | bash" \
+           "echo 'gh pr merge 5 -s' | xargs -0 sh -c" ". <(echo 'gh pr merge 5 -s')" "source <(echo 'gh pr merge 5 -s')" \
            "if true; then gh pr merge 5 -s; fi" "! gh pr merge 5 -s" "timeout 60 gh pr merge 5 -s" \
            "\\gh pr merge 5 -s" "'gh' pr merge 5 -s" "gh pr 'merge' 5 -s" "timeout 60 bash -c 'gh pr merge -s 4'" \
            "echo gh pr merge -s 0" "echo \$(date) gh pr merge -s 0" "gh pr merge 5 -s &" "gh pr merge 5 --rebase 'x" \

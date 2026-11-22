@@ -13,8 +13,9 @@ separate `gh` word (any path) is followed later by the word `pr` and, after that
 word `merge`, not necessarily adjacent (`gh pr -R o/r merge 5`), or by `api` and a
 `.../pulls/<N>/merge` endpoint; wherever it sits (after if/then/!, timeout, env, a
 VAR=value prefix, inside $(...) or backticks).
-A segment that invokes a shell (bash/sh/zsh/eval ...) and has a word containing the
-whole word `merge` is blocked, since its merge hides inside one quoted word. Unbalanced
+A command that mentions gh and the whole word `merge` is blocked if ANY of its segments
+invokes a shell (bash/sh/zsh/eval/source/. ...): the merge can hide in a quoted word or
+come from another segment (`echo '... merge ...' | sh`, `source <(...)`). Unbalanced
 quotes in a command that mentions gh and the word merge are blocked. shlex does not
 expand `$x`, `$'...'`, `$(...)` or backticks, so in a command that mentions gh and the
 whole word merge, a segment that runs gh (or starts with an expansion such as `$G`) and
@@ -47,7 +48,7 @@ MERGE_WORD = re.compile(r"\bmerge\b")
 PULLS_MERGE = re.compile(r"/pulls/[^/\s]+/merge\b")
 PUNCTUATION = "();<>|&\n"
 SEPARATOR_CHARS = frozenset("();|&\n")
-SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish", "eval"})
+SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish", "eval", "source", "."})
 REASON = (
     "gh_merge_guard: only `gh pr merge <N> --rebase` (or `gh pr merge --rebase <N>`) may run "
     "in this repo, as its own command. Blocked: %s"
@@ -135,7 +136,12 @@ def is_allowed(command: str) -> bool:
     # spell gh / merge only once the shell (and shlex) has removed them.
     if not _mentions_merge(command) and not _mentions_merge(" ".join(tokens)):
         return True
-    return all(segment_allowed(words) for words in _segments(tokens))
+    segments = _segments(tokens)
+    # A shell anywhere in a command that mentions gh and merge can run text written by
+    # another segment (`echo '... merge ...' | sh`, `source <(...)`): block it.
+    if any(word.rsplit("/", 1)[-1] in SHELLS for words in segments for word in words):
+        return False
+    return all(segment_allowed(words) for words in segments)
 
 
 def command_from(raw: str) -> str | None:

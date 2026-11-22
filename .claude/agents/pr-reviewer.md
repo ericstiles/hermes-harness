@@ -61,8 +61,8 @@ is reviewed again after that.
 
 ## 4. Review the diff
 
-`git -C "$tree" diff --stat origin/main...HEAD` and
-`git -C "$tree" diff origin/main...HEAD`. Read changed files in full where
+`git -C <tree> diff --stat origin/main...HEAD` and
+`git -C <tree> diff origin/main...HEAD`. Read changed files in full where
 the diff is not enough.
 
 Judge it by the criteria in `main`'s copy of the reviewer rules

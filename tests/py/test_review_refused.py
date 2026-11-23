@@ -65,6 +65,20 @@ def test_list_refused_with_nothing_refused_is_empty() -> None:
     assert refused_lines(GitHub(quiet)) == []
 
 
+def test_latest_refusal_is_by_time_across_comments_and_reviews() -> None:
+    def threads(cmd: Sequence[str], cwd: Path | None = None, env: object = None,
+                timeout: float | None = None) -> Result:  # fmt: skip
+        if list(cmd[:3]) == ["gh", "pr", "list"]:
+            return Result(0, json.dumps(PRS[:1]), "")
+        newer = {**_refusal("head47", "newer reason"), "createdAt": "2026-11-22T10:00:00Z"}
+        older = {**_refusal("head47", "older reason"), "submittedAt": "2026-11-22T09:00:00Z"}
+        return Result(0, json.dumps({"comments": [newer], "reviews": [older]}), "")
+
+    assert refused_lines(GitHub(threads)) == [
+        "PR #47 (bd/r-b8p.14) refused at head47: newer reason"
+    ]
+
+
 def test_cli_list_refused_needs_no_model(monkeypatch: object, capsys: object) -> None:
     import pr_review.__main__ as cli
 

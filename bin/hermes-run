@@ -70,6 +70,8 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/wrapup.sh"
 # shellcheck source=../lib/stop_reason.sh
 . "$HARNESS_HOME/lib/stop_reason.sh"
+# shellcheck source=../lib/epics.sh
+. "$HARNESS_HOME/lib/epics.sh"
 
 MAX=10; CLEAN=0
 for _a in "$@"; do
@@ -391,7 +393,16 @@ for i in $(seq 1 "$MAX"); do
   case "$class" in
     OK_DONE) continue ;;
     NOTES_LOST) echo "The PR's bead lost its PR link (NOTES_CHECK lines above); hermes-review would refuse the PR — stopping. See $log"; break ;;
-    QUEUE_EMPTY) echo "Queue empty."; final=QUEUE_EMPTY; break ;;
+    QUEUE_EMPTY)
+      # A finished epic left open can block all remaining work (xw2.2): close eligible epics
+      # first, and if any closed, run again instead of stopping.
+      epics=$(hh_close_eligible_epics)
+      if [ -n "$epics" ]; then
+        printf '%s\n' "$epics"
+        echo "Closed finished epics that were blocking the queue; checking for ready work again."
+        continue
+      fi
+      echo "Queue empty."; final=QUEUE_EMPTY; break ;;
     BLOCKED) echo "Issue blocked — stopping. See $log"; break ;;
     MODEL_API_ERROR) echo "Agent made no progress (model/API error) — stopping. See $log"; break ;;
     TIMEOUT) echo "Run timed out — stopping. See $log"; break ;;

@@ -149,6 +149,15 @@ if [ "$1" = show ]; then
   [ "${STUB_BD_SHOW_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
   [ -n "$STUB_BEADS" ] && [ -f "$STUB_BEADS/$2.json" ] && cat "$STUB_BEADS/$2.json"
 fi
+# epic close-eligible: STUB_EPICS="a b|c|" plays back one round per call ("a b", then "c",
+# then nothing); STUB_EPICS_FAIL=1 fails. The round counter lives in $STUB_EPIC_COUNT.
+if [ "$1 $2" = "epic close-eligible" ]; then
+  [ "${STUB_EPICS_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
+  n=$(cat "$STUB_EPIC_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$STUB_EPIC_COUNT"
+  ids=$(printf '%s' "${STUB_EPICS:-}" | cut -d'|' -f"$n")
+  list=$(for i in $ids; do printf '"%s",' "$i"; done); list=${list%,}
+  printf '{"closed": [%s], "count": 0, "reason": "x", "schema_version": 1}\n' "$list"
+fi
 exit 0
 S
 cat > "$tmp/bin/gh" <<'S'
@@ -260,6 +269,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/sandbox_clean_tests.sh"
   # session token usage -> one CONTEXT: line before RUN_RESULT (lib/context_usage.py)
   . "$HERE/context_tests.sh"
+  # a finished epic left open must not end the loop QUEUE_EMPTY (bd epic close-eligible)
+  . "$HERE/epics_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

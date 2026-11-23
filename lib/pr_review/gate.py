@@ -48,27 +48,41 @@ def checkout(run: Runner, repo: Path, ref: str, rebase_onto_main: bool) -> Itera
 
 
 def _remove_checkout(run: Runner, repo: Path, parent: Path, tree: Path, added: bool) -> None:
-    """Remove the worktree and its temp parent; on failure log git's stderr, delete and prune."""
+    """Remove the worktree and its temp parent; on failure log git's stderr, delete and prune.
+
+    Never raises, so an exception from the `with` body is never masked: anything unexpected
+    (one `shell.run` does not turn into a Result) is logged instead.
+    """
     removed = False
-    if added:
-        # -f -f: also a locked worktree (it is ours alone: a fresh mkdtemp path).
-        result = run(["git", "worktree", "remove", "--force", "--force", str(tree)], cwd=repo)
-        removed = result.ok
-        if not removed:
-            detail = (result.err.strip() or result.out.strip()).splitlines()
-            log.warning(
-                "worktree cleanup: git worktree remove failed (exit %s): %s; deleting %s, pruning",
-                result.code, detail[0][:300] if detail else "no output", tree,
-            )  # fmt: skip
+    try:
+        if added:
+            # -f -f: also a locked worktree (it is ours alone: a fresh mkdtemp path).
+            result = run(["git", "worktree", "remove", "--force", "--force", str(tree)], cwd=repo)
+            removed = result.ok
+            if not removed:
+                detail = (result.err.strip() or result.out.strip()).splitlines()
+                log.warning(
+                    "worktree cleanup: git worktree remove failed (exit %s): %s; deleting %s",
+                    result.code, detail[0][:300] if detail else "no output", tree,
+                )  # fmt: skip
+    except Exception as exc:  # cleanup must not mask the body's exception
+        log.warning("worktree cleanup failed: %s: %s", type(exc).__name__, exc)
     _force_rmtree(parent)
-    if not removed:
-        run(["git", "worktree", "prune"], cwd=repo)
+    try:
+        if not removed:
+            run(["git", "worktree", "prune"], cwd=repo)
+    except Exception as exc:  # same reason
+        log.warning("worktree cleanup failed: %s: %s", type(exc).__name__, exc)
     if parent.exists():
         log.warning("worktree cleanup: could not delete %s; remove it by hand", parent)
 
 
 def _force_rmtree(path: Path) -> None:
-    """rm -rf that also clears read-only directories (a check may leave some). Never raises."""
+    """rm -rf that also clears read-only directories (a check may leave some). Never raises.
+
+    Symlinks are never chmod-ed: os.walk lists a symlink to a directory under `dirs` and
+    os.chmod would follow it to a directory outside the tree (rmtree only unlinks them).
+    """
     try:
         shutil.rmtree(path)
     except FileNotFoundError:
@@ -76,8 +90,11 @@ def _force_rmtree(path: Path) -> None:
     except OSError:
         for root, dirs, _files in os.walk(path):
             for name in dirs:
+                entry = os.path.join(root, name)
+                if os.path.islink(entry):
+                    continue
                 with suppress(OSError):
-                    os.chmod(os.path.join(root, name), 0o700)
+                    os.chmod(entry, 0o700)
         with suppress(OSError):
             os.chmod(path, 0o700)
         shutil.rmtree(path, ignore_errors=True)

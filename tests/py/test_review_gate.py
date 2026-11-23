@@ -112,6 +112,47 @@ def test_read_only_dir_left_by_the_gate_is_still_cleaned_up(
     assert "git worktree remove failed" in caplog.text
 
 
+def test_read_only_cleanup_never_chmods_through_a_symlink(
+    repo: Path, tmpdir_root: Path, tmp_path: Path
+) -> None:
+    # Review of PR #22: os.walk lists a directory symlink under `dirs`, and os.chmod follows it,
+    # so the read-only fallback must not touch a directory outside the tree.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.chmod(0o750)
+    with gate.checkout(real_run, repo, "origin/main", rebase_onto_main=False) as tree:
+        ro = tree / "cache"
+        ro.mkdir()
+        (ro / "link").symlink_to(outside, target_is_directory=True)
+        (tree / "link").symlink_to(outside, target_is_directory=True)
+        ro.chmod(0o555)
+    assert list(tmpdir_root.iterdir()) == []
+    assert outside.is_dir()
+    assert (outside.stat().st_mode & 0o777) == 0o750
+
+
+def test_unexpected_cleanup_error_is_logged_not_raised(
+    tmpdir_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # "Cleanup never raises" also for exceptions shell.run does not turn into a Result.
+    def raising(cmd: Sequence[str], cwd: Path | None = None, env: object = None,
+                timeout: float | None = None) -> Result:  # fmt: skip
+        if cmd[:3] == ["git", "worktree", "remove"]:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        if cmd[:3] == ["git", "worktree", "add"]:
+            Path(cmd[-2]).mkdir(parents=True)
+        return Result(0, "", "")
+
+    with (
+        caplog.at_level("WARNING", logger="pr_review"),
+        pytest.raises(RuntimeError, match="body"),
+        gate.checkout(raising, Path("/repo"), "ref", rebase_onto_main=False),
+    ):
+        raise RuntimeError("body")  # the body's exception is the one that surfaces
+    assert "worktree cleanup failed: UnicodeDecodeError" in caplog.text
+    assert list(tmpdir_root.iterdir()) == []
+
+
 def test_locked_worktree_is_still_removed(repo: Path, tmpdir_root: Path) -> None:
     # Reproduced cause: a locked worktree makes a single --force remove fail (exit 128).
     with gate.checkout(real_run, repo, "origin/main", rebase_onto_main=False) as tree:

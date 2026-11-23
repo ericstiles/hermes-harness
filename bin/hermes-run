@@ -167,6 +167,11 @@ fi
 claimed_issue() { # <logfile> -> first issue id the run claimed, empty if none
   tr -d '\r' < "$1" | sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' | head -n 1
 }
+current_issue() { # <logfile> [fallback id] -> last bead id claimed (as tsfilter.py stamps it), else fallback
+  local id
+  id=$(tr -d '\r' < "$1" | sed -En 's/.*bd update ([A-Za-z0-9][A-Za-z0-9._-]*) --claim.*/\1/p' | tail -n 1)
+  printf '%s' "${id:-${2:-}}"
+}
 existing_pr() { # <issue> -> URL of a PR from branch bd/<issue>, empty if none or gh fails
   [ -n "$1" ] || return 0
   gh pr list --repo "$REPO" --head "bd/$1" --state all --json url -q '.[0].url' 2>/dev/null | head -n 1
@@ -191,10 +196,18 @@ unclaim_stale() { # <logfile>
   fi
 }
 
-# One Hermes run. Sets: log, timed, status, class, run_start (YYYYMMDD_HHMMSS, to find the session).
+# One Hermes run. Sets: log, timed, status, class, run_start (YYYYMMDD_HHMMSS, to find the session),
+# STAMP_ID (the bead its timed log is stamped with, empty if unknown).
 run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wrap-up: no extension)
   local stamp start end issue prompt=$PROMPT extend=$EXTEND cap=$EXTEND_CAP; local -a ps resume=()
-  if [ -n "${2:-}" ]; then resume=(--resume "$2"); prompt=${3:-$RESUME_PROMPT}; fi
+  # A resumed session does not claim again: its bead is in the log before it (the run being
+  # resumed, else this iteration's claim log). A fresh run starts with no id.
+  STAMP_ID=""
+  if [ -n "${2:-}" ]; then
+    resume=(--resume "$2"); prompt=${3:-$RESUME_PROMPT}
+    [ ! -f "${log:-}" ] || STAMP_ID=$(current_issue "$log")
+    [ -n "$STAMP_ID" ] || [ ! -f "${claim_log:-}" ] || STAMP_ID=$(current_issue "$claim_log")
+  fi
   if [ -n "${3:-}" ]; then extend=0; cap=$1; fi
   run_start=$(date +%Y%m%d_%H%M%S)
   stamp=$(date +%Y%m%d-%H%M%S)
@@ -223,7 +236,7 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
     [ -z "$beads" ] || printf '%s\n' "$beads"
     python3 -u "$WATCHDOG" --limit "$1" --extend "$extend" --cap "$cap" --log "$log" -- \
       hermes chat --pass-session-id ${resume[@]+"${resume[@]}"} ${HERMES_ARGS:-} -q "$prompt" 2>&1; } \
-    | tee "$log" 2>"$tee_err" | python3 -u "$HARNESS_HOME/lib/tsfilter.py" --log "$timed"
+    | tee "$log" 2>"$tee_err" | python3 -u "$HARNESS_HOME/lib/tsfilter.py" --log "$timed" --id "$STAMP_ID"
   ps=("${PIPESTATUS[@]}")
   trap - PIPE
   status=${ps[0]}; end=$(date +%s)
@@ -234,20 +247,21 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   fi
   rm -f "$tee_err"
   # Why Hermes stopped (agent.log "Turn ended"), before RUN_RESULT so the classifier can use it.
+  STAMP_ID=$(current_issue "$log" "$STAMP_ID")
   local sid stop_line ctx_line; sid=$(run_session)
   stop_line="STOP_REASON: $(hh_stop_reason "$sid")"
   echo "$stop_line" | tee -a "$log"
-  hh_stamp_line "$stop_line" >> "$timed" 2>/dev/null || true
+  hh_stamp_line "$stop_line" "$STAMP_ID" >> "$timed" 2>/dev/null || true
   class=$(hermes_classify "$log" "$status")
   # Token usage AFTER classification (it cannot affect the class) and before RUN_RESULT (last).
   ctx_line=$(context_line "$sid")
   echo "$ctx_line" | tee -a "$log"
-  hh_stamp_line "$ctx_line" >> "$timed" 2>/dev/null || true
+  hh_stamp_line "$ctx_line" "$STAMP_ID" >> "$timed" 2>/dev/null || true
   echo "RUN_RESULT=$class" | tee -a "$log"
   issue=$(claimed_issue "$log")
   RUN_TIME_LINE="RUN_TIME start=$(hh_hms "$start") end=$(hh_hms "$end") elapsed=$(hh_elapsed $((end - start))) issue=${issue:-unknown}"
   echo "$RUN_TIME_LINE"
-  { hh_stamp_line "RUN_RESULT=$class"; hh_stamp_line "$RUN_TIME_LINE"; } >> "$timed" 2>/dev/null || true
+  { hh_stamp_line "RUN_RESULT=$class" "$STAMP_ID"; hh_stamp_line "$RUN_TIME_LINE" "$STAMP_ID"; } >> "$timed" 2>/dev/null || true
   runs=$((runs + 1))
 }
 
@@ -262,7 +276,7 @@ notes_check() {
   [ "$rc" = 1 ] || return 0
   class=NOTES_LOST
   { printf '%s\n' "$out"; echo "RUN_RESULT=NOTES_LOST"; } >> "$log"
-  hh_stamp_line "RUN_RESULT=NOTES_LOST" >> "$timed" 2>/dev/null || true
+  hh_stamp_line "RUN_RESULT=NOTES_LOST" "$STAMP_ID" >> "$timed" 2>/dev/null || true
 }
 
 # The session of the run that just ended: its footer, else (killed or crashed, no footer) the
@@ -363,7 +377,7 @@ wrap_up() { # <log with the claim> [session id, when already known]
   if hh_wip_saved "$log"; then echo "Progress saved (RUN_WIP_SAVED); see the issue's WIP: note."
   else echo "warning: the wrap-up did not confirm RUN_WIP_SAVED (it ended as $class); progress may be lost. See $log"; fi
   { echo "WRAPUP_OF=$failed_log"; echo "RUN_RESULT=$failed"; } >> "$log"
-  hh_stamp_line "RUN_RESULT=$failed" >> "$timed" 2>/dev/null || true
+  hh_stamp_line "RUN_RESULT=$failed" "$STAMP_ID" >> "$timed" 2>/dev/null || true
   class=$failed
 }
 

@@ -18,4 +18,6 @@ hh_elapsed() { # <seconds> -> 38s | 41m12s | 2h05m (same style as lib/tsfilter.p
   else printf '%dh%02dm\n' $((s / 3600)) $((s % 3600 / 60)); fi
 }
 
-hh_stamp_line() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$1"; } # a line for the timed twin
+hh_stamp_line() { # <line> [bead id] -> "[HH:MM:SS] line", or "[HH:MM:SS,<id>] line" (the timed twin)
+  printf '[%s%s] %s\n' "$(date +%H:%M:%S)" "${2:+,$2}" "$1"
+}

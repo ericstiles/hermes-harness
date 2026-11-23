@@ -77,6 +77,9 @@ mkdir -p "$tmp/nohost"; for c in herdr tmux; do printf '#!/bin/sh\necho "STUB %s
 # `ps` is stubbed to "no processes" so a REAL Hermes run on this machine cannot affect the tests.
 printf '#!/bin/sh\nexit 0\n' > "$tmp/nohost/ps"; chmod +x "$tmp/nohost/ps"
 export PATH="$tmp/nohost:$PATH"
+# hermes-launch's harness freshness check fetches origin; off here so the launch tests never touch the
+# network. tests/launch_staleness_tests.sh turns it on against a local bare repo.
+export HERMES_FRESHNESS_CHECK=0
 out=$(cd "$W" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 1 ] && say "$out" | grep -q GH_TOKEN && ok "launch refuses without GH_TOKEN" || bad "launch token refusal" "$rc $out"
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1)
@@ -122,6 +125,8 @@ say "$out" | grep -q 'WHAT HAPPENS' && ok "--help wins over other flags (nothing
 mkdir -p "$tmp/linkbin"; ln -s "$BIN/hermes-launch" "$tmp/linkbin/hermes-launch"
 out=$(cd "$W" && GH_TOKEN=x PATH="$tmp/linkbin:$PATH" hermes-launch --dry-run 2>&1)
 say "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "works through a PATH symlink" || bad "symlink" "$out"
+# --- launch: warns when the harness checkout is behind origin/main (bead svz) ---
+. "$HERE/launch_staleness_tests.sh"
 
 # --- hermes-run with stubbed hermes/bd/docker ---
 cat > "$tmp/bin/docker" <<'S'

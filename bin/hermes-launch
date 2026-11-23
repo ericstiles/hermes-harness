@@ -14,6 +14,8 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+# shellcheck source=../lib/freshness.sh
+. "$HARNESS_HOME/lib/freshness.sh"
 
 usage() {
   cat <<'EOF'
@@ -58,15 +60,20 @@ WHAT HAPPENS
          The token is never written to a file, printed, or put on a command line.
        - a hermes-run or "hermes chat" process already running in ANY repo
          (one local model, so one run at a time)
-  4. Creates <repo>/logs and appends one line "YYYYMMDD REASON ISSUE" to
+  4. Checks the hermes-harness checkout it runs from: fetches origin main (at
+     most HERMES_FRESHNESS_TIMEOUT) and prints a warning, then carries on, if
+     the checkout is behind origin/main (with the pull command to run), the
+     fetch failed, it is not on main, or it has uncommitted changes. It never
+     pulls: another loop may be running from the same checkout.
+  5. Creates <repo>/logs and appends one line "YYYYMMDD REASON ISSUE" to
      <repo>/logs/.relaunches (the relaunch counter hermes-supervise reads).
-  5. Opens a new herdr tab named "hermes-run" in the current workspace, with
+  6. Opens a new herdr tab named "hermes-run" in the current workspace, with
      its working directory set to the repo, and types this into it:
          cd '<repo>' && GITHUB_REPO='<owner/name>' [RUN_TIMEOUT=..] '<harness>/bin/hermes-run' N
      If herdr is not usable it falls back to a detached tmux session named
      "hermes-run" (attach with: tmux attach -t hermes-run). If neither works
      it exits 1.
-  6. Returns immediately. The run continues in the tab; hermes-launch does not
+  7. Returns immediately. The run continues in the tab; hermes-launch does not
      wait. The tab's shell loads direnv, so GH_TOKEN reaches hermes-run there.
 
   hermes-run then works the queue: for each issue it starts Hermes in the Docker
@@ -84,6 +91,8 @@ ENVIRONMENT
   RUN_TIMEOUT    optional; --timeout overrides it. Other hermes-run settings
                  (HERMES_ARGS, HERMES_RETRY_ON_TIMEOUT, ...) are inherited
                  only if exported in the tab's shell, not by this command.
+  HERMES_FRESHNESS_CHECK   0 skips the harness checkout check (step 4). Default 1.
+  HERMES_FRESHNESS_TIMEOUT time limit for its git fetch. Default 10s.
 
 EXIT STATUS
   0  started (or --dry-run, or --help)
@@ -130,6 +139,8 @@ fi
 if [ -n "$problems" ]; then
   echo "Not starting. Missing or blocking:$problems" >&2; exit 1
 fi
+# Warn (never block, never pull) when the harness checkout itself is stale (lib/freshness.sh).
+hh_harness_freshness "$HARNESS_HOME"
 # Absolute path to hermes-run so the new tab's shell does not depend on PATH.
 cmd="cd '$REPO_ROOT' && GITHUB_REPO='$GITHUB_REPO' ${TO:+RUN_TIMEOUT='$TO'} '$HARNESS_HOME/bin/hermes-run' $CLEAN$MAX"
 if [ "$DRY" = 1 ]; then echo "DRY RUN: would start in herdr/tmux tab hermes-run: $cmd"; exit 0; fi

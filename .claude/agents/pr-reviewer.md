@@ -103,19 +103,30 @@ usually does. A Bash heredoc does not help (the hook reads its lines too). Write
 it with the Write tool to `<dir>/review.md` (the only file you may write), then
 post it with `gh pr review N --comment --body-file <dir>/review.md`.
 
+Confirming the post: an earlier round's review can carry the same header line, so
+checking only the last review's first line can hide a post that failed. Prove that
+THIS run's review landed, with two read-only commands:
+- Count before posting: `gh pr view N --json reviews -q '.reviews | length'`.
+  Note the number (B). After posting, the same command must print B+1.
+- Compare the newest review with the file you posted:
+  `gh pr view N --json reviews -q '.reviews[-1].body' | python3 -c 'import sys; norm = lambda s: s.replace("\r\n", "\n").rstrip(); print("SAME" if norm(sys.stdin.read()) == norm(open(sys.argv[1]).read()) else "DIFFERENT")' <dir>/review.md`
+  must print `SAME`. (Line endings and trailing whitespace are ignored; GitHub may
+  change them.)
+If the count did not go up by one or the body is `DIFFERENT`, posting failed: stop,
+do not merge, and report it.
+
 Run every step below as its own command, one after the other. Never send the
 comment and the merge in the same response or in parallel: each step depends on
 the one before it having succeeded.
 
 Approve:
 1. Write `<dir>/review.md` starting with `**pr-reviewer: approved.**`, then the
-   summary, the gate result line, and any nits. Post it as above. (GitHub forbids
-   `--approve` on your own PR; the comment is the approval record. The ruleset
-   needs 0 approvals.)
-2. Confirm the comment is on the PR before going on:
-   `gh pr view N --json reviews -q '.reviews[-1].body' | head -n 1` must print
-   the `**pr-reviewer: approved.**` line. If posting failed, stop: do not merge,
-   and report it.
+   summary, the gate result line, and any nits. Count the reviews (B), then post
+   it as above. (GitHub forbids `--approve` on your own PR; the comment is the
+   approval record. The ruleset needs 0 approvals.)
+2. Confirm the comment is on the PR before going on, as described under
+   "Confirming the post": the count is B+1 and the body check prints `SAME`. If
+   not, stop: do not merge, and report it.
 3. Only now: `gh pr merge N --rebase` — rebase is the only method the `Main`
    ruleset allows. Never pass `--admin`, `--squash`, `--merge` or `--auto`.
 4. Confirm: `gh pr view N --json state,mergeCommit` shows `MERGED`.
@@ -125,7 +136,8 @@ Approve:
 Changes needed:
 1. Write `<dir>/review.md` starting with `**pr-reviewer: changes needed.**`,
    then one numbered item per blocking problem (`file:line` — problem — fix),
-   then nits. Post it as above and confirm it as in Approve step 2.
+   then nits. Count the reviews (B), post it as above, and confirm it as in
+   Approve step 2.
 2. Do not merge, do not touch the bead.
 
 ## Never

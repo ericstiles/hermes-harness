@@ -7,7 +7,9 @@
 # fetch, not on branch main, uncommitted changes to tracked files. Prints nothing when all is well,
 # or when the harness is not a git checkout. Never pulls (another loop may be running from the same
 # checkout) and always returns 0: a warning never changes the launch. The fetch never prompts
-# (GIT_TERMINAL_PROMPT=0, ssh BatchMode=yes) and a missing python3 is named in the warning.
+# (GIT_TERMINAL_PROMPT=0, ssh BatchMode=yes added to GIT_SSH_COMMAND or core.sshCommand; a GIT_SSH
+# wrapper is left alone, and an explicit -o BatchMode=no already there wins, as ssh keeps the first
+# value) and a missing python3 is named in the warning.
 # HERMES_FRESHNESS_CHECK=0 skips it; HERMES_FRESHNESS_TIMEOUT (default 10s) limits the fetch.
 
 hh_harness_freshness() {
@@ -19,7 +21,14 @@ hh_harness_freshness() {
     rc=127; why="python3 not found; it runs the fetch's time limit"
   else
     # Never wait on a credential or ssh host-key prompt: fail at once instead (bead ckh).
-    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes" \
+    # GIT_SSH_COMMAND outranks core.sshCommand and GIT_SSH, so build on what the user set instead
+    # of replacing it; with only GIT_SSH (a wrapper program) set, leave ssh alone.
+    local -a fetch_env=(GIT_TERMINAL_PROMPT=0) ssh_cmd
+    if [ -n "${GIT_SSH_COMMAND:-}" ] || [ -z "${GIT_SSH:-}" ]; then
+      ssh_cmd=${GIT_SSH_COMMAND:-$(git -C "$h" config core.sshCommand 2>/dev/null)}
+      fetch_env+=("GIT_SSH_COMMAND=${ssh_cmd:-ssh} -o BatchMode=yes")
+    fi
+    env "${fetch_env[@]}" \
       python3 "$h/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
       git -C "$h" fetch -q origin main >/dev/null 2>&1 </dev/null; rc=$?
   fi

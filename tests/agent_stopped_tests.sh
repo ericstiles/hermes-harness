@@ -54,11 +54,25 @@ out=$(HERMES_LOG_DIR="$tmp/l3" runit "$BIN/hermes-supervise" "$SF")
 say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q "^WHY=.*hermes --resume $SID" \
   && ok "agent_stopped: supervise asks the human and shows the resume command" || bad "agent_stopped: supervise" "$out"
 rm -rf "$W/logs"
+# nth_timed_log <dir> <n>: the n-th timed log in the order hermes-run created them. Two runs started in
+# the same second are run-<ts>.timed.txt then run-<ts>-2.timed.txt, and plain `ls` sorts the second
+# first ('-' < '.'), so order by the name without .timed.txt (bead 49w: this check failed at random).
+nth_timed_log() {
+  ls "$1"/run-*.timed.txt 2>/dev/null | sed 's/\.timed\.txt$//' | sort | sed -n "${2}p" | sed 's/$/.timed.txt/'
+}
+mkdir -p "$tmp/order"; : > "$tmp/order/run-20260101-000000.timed.txt"; : > "$tmp/order/run-20260101-000000-2.timed.txt"
+: > "$tmp/order/run-20260101-000001.timed.txt"
+[ "$(nth_timed_log "$tmp/order" 1)" = "$tmp/order/run-20260101-000000.timed.txt" ] \
+  && [ "$(nth_timed_log "$tmp/order" 2)" = "$tmp/order/run-20260101-000000-2.timed.txt" ] \
+  && [ "$(nth_timed_log "$tmp/order" 3)" = "$tmp/order/run-20260101-000001.timed.txt" ] \
+  && ok "tests: timed logs of runs started in the same second are taken in creation order" \
+  || bad "tests: timed log order" "$(nth_timed_log "$tmp/order" 1) $(nth_timed_log "$tmp/order" 2)"
+rm -rf "$tmp/order"
 # mr4: a resumed session never claims again; its timed log still carries the bead from the first log
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 grep -v -- '--claim' "$FX/ok_done.log" > "$tmp/ok_noclaim.log"
 STUB_FIXTURE="$SF" STUB_FIXTURE_2="$tmp/ok_noclaim.log" runit "$BIN/hermes-run" 1 >/dev/null 2>&1
-t2=$(ls "$W"/logs/run-*.timed.txt 2>/dev/null | sed -n 2p)
+t2=$(nth_timed_log "$W/logs" 2)
 [ -n "$t2" ] && ! grep -qvE '^\[[0-9:]{8},organize_music-6ut\.10\] ' "$t2" \
   && ok "agent_stopped: the resumed run's timed log is stamped with the first run's bead" \
   || bad "agent_stopped: resumed id" "$(ls "$W"/logs; head -3 "$t2" 2>/dev/null)"

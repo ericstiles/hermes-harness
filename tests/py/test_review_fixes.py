@@ -7,6 +7,7 @@ import pytest
 from pr_review import fixes
 from pr_review.services import PullRequest
 from pr_review.verdict import Problem, Verdict
+from test_review_verdict import assert_follows_issue_template  # the AGENTS.md template check
 
 URL = "https://github.com/o/r/pull/7"
 BODY = "Did the thing.\n\nBead: om-1\nHermes-Session: 20261119_101500_abc123\n"
@@ -98,3 +99,13 @@ def test_fixed_in_note_marks_a_bead_solved_by_a_pr() -> None:
 )
 def test_fixed_in_ignores_other_mentions_of_the_pr(notes: str) -> None:
     assert not fixes.is_fixed_in(notes, URL)
+
+
+def test_fix_issue_follows_the_agents_md_issue_template() -> None:
+    verdict = Verdict(False, "Guard dropped.", PROBLEMS)
+    assert_follows_issue_template(fixes.fix_issue_args(verdict, PROBLEMS, "om-1", PR, priority=1))
+
+
+def test_rebase_issue_follows_the_agents_md_issue_template() -> None:
+    args = fixes.rebase_issue_args("om-1", PR, "CONFLICT (content): a.py", priority=2)
+    assert_follows_issue_template(args)

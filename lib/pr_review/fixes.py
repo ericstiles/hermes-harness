@@ -10,7 +10,15 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from pr_review.verdict import Problem, Verdict
+from pr_review.verdict import (
+    DESIGN_SECTIONS,
+    DIFF_CHECK,
+    GATE_CHECK,
+    ISSUE_SECTIONS,
+    Problem,
+    Verdict,
+    template_text,
+)
 
 if TYPE_CHECKING:  # services imports this module
     from pr_review.services import PullRequest
@@ -87,68 +95,105 @@ def fix_issue_args(
         )
         or f"- [ ] {verdict.summary or 'See the review comment on the PR.'}"
     )
-    acceptance = (
-        f"Every checklist item is fixed in new commits on {branch}; the repo's quality gate "
-        f"passes; PR #{pr.number} is unchanged apart from those commits."
-    )
-    body = (
-        f"## Problem\nThe reviewer rejected PR #{pr.number} ({pr.url}) for {bead}.\n\n"
-        f"{verdict.summary}\n\n## Review checklist\n{checklist}\n\n"
-        f"## Where\n- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing; do not "
-        f"branch from main)\n- Original ticket: {bead}\n- Hermes-Session: {session}\n\n"
-        "## Fix scope\nOnly the checklist above. Do NOT change: anything else in the PR, the "
-        f"PR title or its `Bead: {bead}` line. If a point needs a fix that another open bead "
-        "describes, follow AGENTS.md (Review-fix issues, step 3): claim it and note "
-        f"`{fixed_in_note(pr.url, '<this issue>')}` on it.\n\n"
-        f"## Base branch\n`{branch}`: `git fetch origin && git checkout -B {branch} "
-        f"origin/{branch}`\n\n"
-        f"## How\n1. Read the review: `gh pr view {pr.number} --comments`.\n"
-        "2. Tests first for each bug (a failing test, then the fix).\n"
-        f"3. Commit and `git push origin {branch}`. Do NOT open a new PR. Do NOT force-push.\n"
-        f'4. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close this '
-        f"issue or {bead}: the reviewer closes both when it merges.\n\n"
-        f"## Acceptance\n{acceptance}\n\n"
-        "## Constraints\nThe repo's AGENTS.md rules; existing tests keep passing.\n\n"
-        f"## Dependencies\ndiscovered-from: {bead}\n"
-    )
+    files = sorted({p.file for p in problems if p.file})
+    modify = ", ".join(f"`{f}`" for f in files) if files else "The files the review names"
+    body = template_text(ISSUE_SECTIONS, {
+        "Goal": f"Fix every point of the reviewer's checklist for PR #{pr.number} ({bead}) so "
+                "it can be merged.",
+        "Why": f"The reviewer rejected PR #{pr.number} ({pr.url}) for {bead}: "
+               f"{verdict.summary or 'see the review comment on the PR.'}",
+        "Current state": f"- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing; do not "
+                         f"branch from main)\n- Original ticket: {bead}\n- Hermes-Session: "
+                         f"{session}\n\nReview checklist:\n{checklist}",
+        "Repro": f"N/A: the review comment (`gh pr view {pr.number} --comments`) gives the "
+                 "observed behavior for each checklist item.",
+        "In scope": "Only the checklist above. If a point needs a fix that another open bead "
+                    "describes, follow AGENTS.md (Review-fix issues, step 3): claim it and note "
+                    f"`{fixed_in_note(pr.url, '<this issue>')}` on it.",
+        "Expected to modify": f"{modify}, and their tests.",
+        "Out of scope / Forbidden": "Anything else in the PR, the PR title or its "
+                                    f"`Bead: {bead}` line. Do NOT open a new PR. Do NOT "
+                                    "force-push.",
+        "Base branch": f"`{branch}`: `git fetch origin && git checkout -B {branch} "
+                       f"origin/{branch}`",
+        "Tests first": "For each bug in the checklist, a test that FAILS on the branch for that "
+                       "reason, then the fix. Name the tests and paste the failing output in "
+                       "a PR comment.",
+    })  # fmt: skip
+    design = template_text(DESIGN_SECTIONS, {
+        "Approach": f"1. Read the review: `gh pr view {pr.number} --comments`.\n"
+                    "2. Tests first for each bug (a failing test, then the fix).\n"
+                    f"3. Commit and `git push origin {branch}`.\n"
+                    f'4. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close '
+                    f"this issue or {bead}: the reviewer closes both when it merges.",
+        "Invariants": f"PR #{pr.number} keeps its title and `Bead: {bead}` line; existing "
+                      "tests keep passing.",
+        "Edge cases": "N/A: the checklist items are the cases.",
+        "Produces for downstream": f"N/A: the reviewer reviews PR #{pr.number} again.",
+    })  # fmt: skip
+    acceptance = "\n".join((
+        f"[ ] every checklist item is fixed in new commits on {branch}",
+        f"[ ] PR #{pr.number} is unchanged apart from those commits",
+        GATE_CHECK,
+        DIFF_CHECK,
+    ))  # fmt: skip
     return [
         "create", fix_title(bead, pr.number),
         "-t", "bug", "-p", str(priority), "-l", REVIEW_FIX_LABEL,
         "--deps", f"discovered-from:{bead}",
-        "-d", body, "--acceptance", acceptance, "--silent",
+        "-d", body, "--design", design, "--acceptance", acceptance, "--silent",
     ]  # fmt: skip
 
 
 def rebase_issue_args(bead: str, pr: PullRequest, detail: str, priority: int) -> list[str]:
     """`bd` arguments for a rebase-only fix: the PR's branch conflicts with main."""
     branch = pr.branch
-    acceptance = (
-        f"{branch} is rebased onto the current origin/main with no conflict markers; the "
-        f"repo's quality gate passes; PR #{pr.number} has no other changes."
-    )
-    body = (
-        f"## Problem\nPR #{pr.number} ({pr.url}) for {bead} no longer rebases cleanly onto "
-        "origin/main. This is a mechanical conflict, not a code review rejection.\n\n"
-        f"```\n{detail.strip()[:2000]}\n```\n\n"
-        f"## Where\n- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing)\n"
-        f"- Original ticket: {bead}\n\n"
-        "## Fix scope\nOnly resolve the conflicts, keeping the intent of both sides. Do NOT "
-        f"change anything else, the PR title or its `Bead: {bead}` line.\n\n"
-        f"## How\n1. `git fetch origin && git checkout -B {branch} origin/{branch}`\n"
-        "2. `git rebase origin/main`; resolve each conflict, `git add`, `git rebase --continue`.\n"
-        "3. Run the tests and lint.\n"
-        f"4. `git push --force-with-lease origin {branch}` (the only case where a force-push "
-        "is allowed, and only to this branch). Do NOT open a new PR.\n"
-        f'5. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close this '
-        f"issue or {bead}: the reviewer closes both when it merges.\n\n"
-        f"## Acceptance\n{acceptance}\n\n"
-        f"## Dependencies\ndiscovered-from: {bead}\n"
-    )
+    body = template_text(ISSUE_SECTIONS, {
+        "Goal": f"Rebase PR #{pr.number}'s branch `{branch}` onto origin/main so it can be "
+                "merged again.",
+        "Why": f"PR #{pr.number} ({pr.url}) for {bead} no longer rebases cleanly onto "
+               "origin/main. This is a mechanical conflict, not a code review rejection.",
+        "Current state": f"- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing)\n"
+                         f"- Original ticket: {bead}\n\nThe rebase stopped with:\n"
+                         f"```\n{detail.strip()[:2000]}\n```",
+        "Repro": f"`git fetch origin && git checkout -B {branch} origin/{branch} && "
+                 "git rebase origin/main`\n**Expected:** a clean rebase.\n"
+                 "**Actual:** the conflict above.",
+        "In scope": "Only resolve the conflicts, keeping the intent of both sides, then "
+                    f"`git push --force-with-lease origin {branch}` (the only case where a "
+                    "force-push is allowed, and only to this branch).",
+        "Expected to modify": "Only the conflicted files the rebase names.",
+        "Out of scope / Forbidden": "Anything else, the PR title or its "
+                                    f"`Bead: {bead}` line. Do NOT open a new PR.",
+        "Base branch": f"`{branch}` (existing), rebased onto `origin/main`.",
+        "Tests first": "N/A: a mechanical rebase adds no behavior; the existing tests must "
+                       "pass after it.",
+    })  # fmt: skip
+    design = template_text(DESIGN_SECTIONS, {
+        "Approach": f"1. `git fetch origin && git checkout -B {branch} origin/{branch}`\n"
+                    "2. `git rebase origin/main`; resolve each conflict, `git add`, "
+                    "`git rebase --continue`.\n"
+                    "3. Run the tests and lint.\n"
+                    f"4. `git push --force-with-lease origin {branch}` (the only case where a "
+                    "force-push is allowed, and only to this branch).\n"
+                    f'5. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close '
+                    f"this issue or {bead}: the reviewer closes both when it merges.",
+        "Invariants": "Both sides' intent is kept; existing tests keep passing.",
+        "Edge cases": "A conflict that needs more than a mechanical rebase: mark this issue "
+                      "blocked and say why, as AGENTS.md says for a blocker.",
+        "Produces for downstream": f"N/A: the reviewer reviews PR #{pr.number} again.",
+    })  # fmt: skip
+    acceptance = "\n".join((
+        f"[ ] {branch} is rebased onto the current origin/main with no conflict markers",
+        f"[ ] PR #{pr.number} has no other changes",
+        GATE_CHECK,
+        "[ ] git diff --stat origin/main shows only the PR's own paths",
+    ))  # fmt: skip
     return [
         "create", rebase_title(bead, pr.number),
         "-t", "bug", "-p", str(priority), "-l", f"{REVIEW_FIX_LABEL},{REBASE_LABEL}",
         "--deps", f"discovered-from:{bead}",
-        "-d", body, "--acceptance", acceptance, "--silent",
+        "-d", body, "--design", design, "--acceptance", acceptance, "--silent",
     ]  # fmt: skip
 
 

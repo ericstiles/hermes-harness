@@ -38,7 +38,8 @@ FIELDS = (
 USAGE = """usage: bead_stats.py start STATS_JSON READY_JSON
        bead_stats.py summary STATS_JSON [ID ...]
   STATS_JSON   output of `bd stats --json`
-  READY_JSON   output of `bd ready --json --exclude-type epic --sort priority --limit 1`
+  READY_JSON   output of `bd ready --json --exclude-type epic --sort priority --limit 1`;
+               "" when it failed (prints "next unavailable", not "next none")
   -h, --help   show this help and exit
 """
 
@@ -97,8 +98,14 @@ def parse_next(text: str) -> Next | None:
     return Next(str(first.get("id", "?")), title, first.get("priority", "?"))
 
 
-def start_line(stats: Stats, nxt: Next | None) -> str:
-    head = f'next {nxt.id} "{nxt.title}" (P{nxt.priority})' if nxt else "next none"
+NEXT_UNAVAILABLE = "unavailable"  # `bd ready` failed: unknown, which is not an empty queue
+
+
+def start_line(stats: Stats, nxt: Next | str | None) -> str:
+    if isinstance(nxt, Next):
+        head = f'next {nxt.id} "{nxt.title}" (P{nxt.priority})'
+    else:
+        head = "next unavailable" if nxt == NEXT_UNAVAILABLE else "next none"
     return (
         f"{PREFIX} {head} | ready {stats.ready} in_progress {stats.in_progress} "
         f"blocked {stats.blocked} | open {stats.open} closed {stats.closed} of {stats.total} "
@@ -118,7 +125,9 @@ def summary_line(stats: Stats, worked: list[str]) -> str:
 
 def main(argv: list[str]) -> str:
     if len(argv) >= 3 and argv[0] == "start":
-        return start_line(parse_stats(argv[1]), parse_next(argv[2]))
+        # READY_JSON "" = `bd ready` failed or timed out (hermes-run passes "[]" for an empty list)
+        nxt = parse_next(argv[2]) if argv[2] else NEXT_UNAVAILABLE
+        return start_line(parse_stats(argv[1]), nxt)
     if len(argv) >= 2 and argv[0] == "summary":
         return summary_line(parse_stats(argv[1]), argv[2:])
     raise ValueError("usage: start STATS READY | summary STATS [ID ...]")

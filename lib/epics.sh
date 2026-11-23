@@ -20,16 +20,19 @@ print(" ".join(str(i) for i in d["closed"]))' 2>/dev/null
 }
 
 hh_close_eligible_epics() {
-  local round=0 json ids closed=""
+  local round=0 json ids closed="" capped=1
   while [ "$round" -lt "$HH_EPIC_ROUNDS" ]; do
     round=$((round + 1))
+    capped=0
     json=$(bd epic close-eligible --json --reason "$HH_EPIC_REASON" 2>/dev/null) || break
     ids=$(printf '%s' "$json" | _hh_epic_ids) || break
     [ -n "$ids" ] || break
     closed="${closed:+$closed }$ids"
+    capped=1 # this round closed something; if it was the last allowed one, more may be eligible
   done
   [ -n "$closed" ] || return 0
   echo "EPICS_CLOSED: $closed"
+  [ "$capped" = 0 ] || echo "warning: stopped closing epics after $HH_EPIC_ROUNDS rounds; more may be eligible"
   bd dolt push >/dev/null 2>&1 || echo "warning: bd dolt push failed after closing epics; they are closed locally"
   return 0
 }

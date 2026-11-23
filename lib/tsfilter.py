@@ -42,7 +42,8 @@ DEFAULT_STALL = 600.0
 READ_CHUNK = 65536
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhd]?)$")
 _UNIT = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
-# same command bin/hermes-run's claimed_issue() reads, limited to bead-id characters
+# same pattern as lib/runtime.sh's hh_claimed_issue (bin/hermes-run's claimed_issue); a test
+# checks they agree
 _CLAIM = re.compile(r"\bbd update ([A-Za-z0-9][A-Za-z0-9._-]*) --claim\b")
 
 
@@ -57,9 +58,15 @@ def fmt_stamp(epoch: float, bead: Optional[str] = None) -> str:
 
 
 def claimed_bead(line: str, current: Optional[str]) -> Optional[str]:
-    """The id the line claims (the last one, if several), else `current`."""
+    """The run's bead: `current` once known, else the first id this line claims.
+
+    The first claim is the run's bead, as everywhere in hermes-run (RUN_TIME issue=, BEADS: worked,
+    the wrap-up prompt). A later claim (a review-fix run marking a side bead B) does not switch it.
+    """
+    if current:
+        return current
     found = _CLAIM.findall(line)
-    return found[-1] if found else current
+    return found[0] if found else None
 
 
 def fmt_elapsed(seconds: float) -> str:

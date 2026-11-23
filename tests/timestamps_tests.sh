@@ -85,8 +85,34 @@ printf 'a\n' | HH_TS_FAKE_CLOCK=100 tsf --id x-9 > "$tmp/ts15.out"
 eq "timestamps: --id stamps the id from the first line (a resumed session)" "$(cat "$tmp/ts15.out")" "[00:01:40,x-9] a"
 printf 'run bd update <id> --claim\nb\n' | HH_TS_FAKE_CLOCK="100 101" tsf > "$tmp/ts16.out"
 eq "timestamps: a placeholder like <id> in prose is not an id" "$(cat "$tmp/ts16.out")" "$(printf '[00:01:40] run bd update <id> --claim\n[00:01:41] b')"
-printf 'bd update p-1 --claim\nbd update p-2 --claim\n' | HH_TS_FAKE_CLOCK="100 101" tsf --id p-0 > "$tmp/ts17.out"
-eq "timestamps: a later claim replaces the current id" "$(cut -d' ' -f1 "$tmp/ts17.out" | tr '\n' ' ')" "[00:01:40,p-1] [00:01:41,p-2] "
+# The run's bead is its FIRST claim, as everywhere in hermes-run (RUN_TIME issue=, BEADS: worked, the
+# wrap-up prompt): a review-fix run's later `bd update B --claim` marks a side bead, it does not
+# switch the run to B (bead 97j). A resumed session's --id stays too.
+printf 'bd update p-1 --claim\nbd update p-2 --claim\nc\n' | HH_TS_FAKE_CLOCK="100 101 101" tsf > "$tmp/ts17.out"
+eq "timestamps: a later claim (a review-fix's side bead) does not replace the run's bead" \
+  "$(cut -d' ' -f1 "$tmp/ts17.out" | tr '\n' ' ')" "[00:01:40,p-1] [00:01:41,p-1] [00:01:41,p-1] "
+printf 'bd update p-2 --claim\n' | HH_TS_FAKE_CLOCK=100 tsf --id p-0 > "$tmp/ts17b.out"
+eq "timestamps: a resumed session's --id is kept over a claim in it" "$(cut -d' ' -f1 "$tmp/ts17b.out")" "[00:01:40,p-0]"
+# tsfilter.py and hermes-run's claimed_issue (hh_claimed_issue, lib/runtime.sh) read the same id
+. "$ROOT/lib/runtime.sh"
+agree=0; cases=0
+while IFS='|' read -r line want; do
+  cases=$((cases + 1))
+  printf '%s\n' "$line" > "$tmp/claim.log"
+  py=$(printf '%s\n' "$line" | HH_TS_FAKE_CLOCK=100 tsf | sed -nE 's/^\[[0-9:]{8},([^]]+)\].*/\1/p')
+  sh=$(hh_claimed_issue "$tmp/claim.log")
+  if [ "$py" = "$want" ] && [ "$sh" = "$want" ]; then agree=$((agree + 1))
+  else bad "timestamps: claim id for '$line'" "tsfilter='$py' claimed_issue='$sh' want='$want'"; fi
+done <<'CASES'
+bd update a-1 --claim|a-1
+  ┊ 💻 $ bd update om-abc.1 --claim --json|om-abc.1
+xbd update b-2 --claim|
+bd update c-3 --claimed|
+run bd update <id> --claim|
+bd update d-4 --claim; bd update e-5 --claim|d-4
+bd update f-6 --claim-it|f-6
+CASES
+eq "timestamps: tsfilter.py and claimed_issue agree on the claimed id ($cases cases)" "$agree" "$cases"
 ( printf 'bd update s-1 --claim\n'; sleep 1.5; printf 'b\n' ) | HERMES_STALL_WARN=1s HERMES_TS_MIN_GAP=60 tsf > "$tmp/ts18.out"
 grep -qE '^\[[0-9:]{8},s-1\] no output for 1s' "$tmp/ts18.out" && ok "timestamps: the stall warning carries the bead id" \
   || bad "timestamps: stall warning id" "$(cat "$tmp/ts18.out")"

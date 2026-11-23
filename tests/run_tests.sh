@@ -158,17 +158,22 @@ fi
 # then nothing); STUB_EPICS_FAIL=1 fails. The round counter lives in $STUB_EPIC_COUNT.
 if [ "$1 $2" = "epic close-eligible" ]; then
   [ "${STUB_EPICS_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
-  n=$(cat "$STUB_EPIC_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$STUB_EPIC_COUNT"
+  cf=${STUB_EPIC_COUNT:-/dev/null}  # unset: no counter file, every call is round 1
+  n=$(cat "$cf" 2>/dev/null); n=$((${n:-0} + 1)); echo "$n" > "$cf"
   ids=$(printf '%s' "${STUB_EPICS:-}" | cut -d'|' -f"$n")
   list=$(for i in $ids; do printf '"%s",' "$i"; done); list=${list%,}
   printf '{"closed": [%s], "count": 0, "reason": "x", "schema_version": 1}\n' "$list"
 fi
-# stats / ready --json: $STUB_STATS / $STUB_READY (canned JSON) if set; STUB_BD_STATS_HANG=1 hangs
+# stats / ready --json: $STUB_STATS / $STUB_READY (canned JSON) if set; STUB_BD_STATS_HANG=1 hangs;
+# STUB_BD_READY_FAIL=1 makes `bd ready` fail
 if [ "$1" = stats ]; then
   [ "${STUB_BD_STATS_HANG:-0}" = 1 ] && { sleep 60; exit 0; }
   [ -n "$STUB_STATS" ] && printf '%s\n' "$STUB_STATS"
 fi
-[ "$1" = ready ] && [ -n "$STUB_READY" ] && printf '%s\n' "$STUB_READY"
+if [ "$1" = ready ]; then
+  [ "${STUB_BD_READY_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
+  [ -n "$STUB_READY" ] && printf '%s\n' "$STUB_READY"
+fi
 exit 0
 S
 cat > "$tmp/bin/gh" <<'S'

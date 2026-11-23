@@ -164,14 +164,11 @@ if [ "$CLEAN" = 1 ]; then
   hh_sandbox_reset "$IMAGE" "$NAME" "$LOG_DIR" || exit 2
 fi
 
-claimed_issue() { # <logfile> -> first issue id the run claimed, empty if none
-  tr -d '\r' < "$1" | sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' | head -n 1
-}
-current_issue() { # <logfile> [fallback id] -> last bead id claimed (as tsfilter.py stamps it), else fallback
-  local id
-  id=$(tr -d '\r' < "$1" | sed -En 's/.*bd update ([A-Za-z0-9][A-Za-z0-9._-]*) --claim.*/\1/p' | tail -n 1)
-  printf '%s' "${id:-${2:-}}"
-}
+# The run's bead is the FIRST id it claimed (lib/runtime.sh hh_claimed_issue), here and in the timed
+# log's stamps (lib/tsfilter.py): a review-fix run's later `bd update B --claim` only marks a side
+# bead. A first claim that failed (bead held elsewhere) would be named instead; with one run at a
+# time that is rare, and every use below would be off the same way.
+claimed_issue() { hh_claimed_issue "$1"; } # <logfile> -> the run's bead, empty if none
 existing_pr() { # <issue> -> URL of a PR from branch bd/<issue>, empty if none or gh fails
   [ -n "$1" ] || return 0
   gh pr list --repo "$REPO" --head "bd/$1" --state all --json url -q '.[0].url' 2>/dev/null | head -n 1
@@ -205,8 +202,8 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   STAMP_ID=""
   if [ -n "${2:-}" ]; then
     resume=(--resume "$2"); prompt=${3:-$RESUME_PROMPT}
-    [ ! -f "${log:-}" ] || STAMP_ID=$(current_issue "$log")
-    [ -n "$STAMP_ID" ] || [ ! -f "${claim_log:-}" ] || STAMP_ID=$(current_issue "$claim_log")
+    [ ! -f "${log:-}" ] || STAMP_ID=$(claimed_issue "$log")
+    [ -n "$STAMP_ID" ] || [ ! -f "${claim_log:-}" ] || STAMP_ID=$(claimed_issue "$claim_log")
   fi
   if [ -n "${3:-}" ]; then extend=0; cap=$1; fi
   run_start=$(date +%Y%m%d_%H%M%S)
@@ -247,7 +244,7 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   fi
   rm -f "$tee_err"
   # Why Hermes stopped (agent.log "Turn ended"), before RUN_RESULT so the classifier can use it.
-  STAMP_ID=$(current_issue "$log" "$STAMP_ID")
+  [ -n "$STAMP_ID" ] || STAMP_ID=$(claimed_issue "$log") # as tsfilter.py ended: --id, else 1st claim
   local sid stop_line ctx_line; sid=$(run_session)
   stop_line="STOP_REASON: $(hh_stop_reason "$sid")"
   echo "$stop_line" | tee -a "$log"
@@ -283,9 +280,6 @@ notes_check() {
 # harness session that started with it in Hermes' store.
 run_session() { local s; s=$(session_id "$log"); [ -n "$s" ] || s=$(hh_find_session "$run_start"); printf '%s' "$s"; }
 
-# One "CONTEXT: baseline ..." line: the fixed prompt budget of a fresh session from
-# `hermes prompt-size --json` (offline, run in the repo root so the context files are the
-# target repo's). Hermes reports chars/bytes there, not tokens. Never fails the run.
 # bd under the watchdog (a stuck bd must not hold up the loop); prints its stdout, returns its exit.
 _beads_bd() {
   python3 "$WATCHDOG" --limit "${HERMES_BEADS_TIMEOUT:-15s}" --extend 0 --grace 2s --log /dev/null -- \
@@ -300,8 +294,10 @@ _beads_line() { # start | summary [id ...]
   stats=$(_beads_bd stats --json); rc=$?
   if [ "$rc" = 124 ]; then echo "BEADS: unavailable (bd stats timed out after ${HERMES_BEADS_TIMEOUT:-15s})"; return 0; fi
   if [ "$mode" = start ]; then
-    ready=$(_beads_bd ready --json --exclude-type epic --sort priority --limit 1)
-    line=$(python3 "$HARNESS_HOME/lib/bead_stats.py" start "$stats" "${ready:-[]}" 2>/dev/null | head -n 1)
+    # A failed or timed-out `bd ready` passes "" (next unavailable); "[]" would read as an empty queue.
+    if ready=$(_beads_bd ready --json --exclude-type epic --sort priority --limit 1); then ready=${ready:-[]}
+    else ready=""; fi
+    line=$(python3 "$HARNESS_HOME/lib/bead_stats.py" start "$stats" "$ready" 2>/dev/null | head -n 1)
   else
     line=$(python3 "$HARNESS_HOME/lib/bead_stats.py" summary "$stats" "$@" 2>/dev/null | head -n 1)
   fi
@@ -310,6 +306,9 @@ _beads_line() { # start | summary [id ...]
 }
 beads_start_line() { _beads_line start; }
 
+# One "CONTEXT: baseline ..." line: the fixed prompt budget of a fresh session from
+# `hermes prompt-size --json` (offline, run in the repo root so the context files are the
+# target repo's). Hermes reports chars/bytes there, not tokens. Never fails the run.
 baseline_line() {
   local json rc limit=${HERMES_BASELINE_TIMEOUT:-15s}
   json=$(python3 "$WATCHDOG" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \

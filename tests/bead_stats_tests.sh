@@ -28,6 +28,13 @@ out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?; log=$(bs_log)
 eq "beads: bd giving no stats gives one unavailable line and the run continues" \
   "$rc|$(sed -n 2p "$log")|$(tail -n 1 "$log")" "0|BEADS: unavailable (empty input)|RUN_RESULT=OK_DONE"
 
+# bd ready failing while bd stats works -> "next unavailable", never "next none" beside ready 3 (bead 97j)
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
+out=$( (export STUB_STATS="$BS_STATS" STUB_BD_READY_FAIL=1; runit "$BIN/hermes-run" 1) 2>&1); rc=$?; log=$(bs_log)
+eq "beads: a failing bd ready says next unavailable, not an empty queue" \
+  "$rc|$(sed -n 2p "$log")|$(tail -n 1 "$log")" \
+  "0|BEADS: next unavailable | ready 3 in_progress 0 blocked 2 | open 5 closed 7 of 12 | epics ready to close 0|RUN_RESULT=OK_DONE"
+
 # bd hanging -> stopped at HERMES_BEADS_TIMEOUT, run unchanged and quick
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"; began=$(date +%s)
 out=$( (export STUB_BD_STATS_HANG=1 HERMES_BEADS_TIMEOUT=1s; runit "$BIN/hermes-run" 1) 2>&1); rc=$?

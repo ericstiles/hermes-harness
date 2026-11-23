@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pr_review.fixes import FIXED_IN_PREFIX, HUMAN_LABEL, REVIEW_FIX_LABEL, is_fix_for, is_fixed_in
 from pr_review.meta import BRANCH_PREFIX
 from pr_review.shell import Runner, must
-from pr_review.verdict import REFUSED_PREFIX
+from pr_review.verdict import MARKER_PREFIX, REFUSED_PREFIX
 
 LABEL_COLOR = "d93f0b"
 # Rounds of `bd epic close-eligible`: closing a child epic can make its parent eligible.
@@ -75,13 +75,18 @@ class GitHub:
         cmd = ["gh", "pr", "view", str(pr.number), "--json", "comments,reviews"]
         data = json.loads(must(self._run(cmd), "gh pr view").out)
         needle = f"{REFUSED_PREFIX}{pr.head_sha}:"
+        reviewed = f"<!-- {MARKER_PREFIX}{pr.head_sha} -->"
         # Comments and reviews are two lists; order them by time (ISO timestamps sort as
         # text) so "latest" is really the latest. Missing timestamps sort first.
         items = data.get("comments", []) + data.get("reviews", [])
         items = sorted(items, key=lambda i: i.get("createdAt") or i.get("submittedAt") or "")
-        refusals = [i.get("body", "") for i in items if needle in i.get("body", "")]
-        if not refusals:
+        # hermes-review's own markers for THIS head, in time order: a refusal can be cured
+        # without a new commit (title, body, bead notes), after which the same head gets a
+        # normal review marker. Only a refusal that is still the latest counts.
+        ours = [b for b in (i.get("body", "") for i in items) if needle in b or reviewed in b]
+        if not ours or needle not in ours[-1]:
             return None
+        refusals = [ours[-1]]
         text = refusals[-1].split(REFUSED_NOTE, 1)[-1]
         return text.strip().splitlines()[0] if text.strip() else "(no reason given)"
 

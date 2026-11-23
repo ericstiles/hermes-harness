@@ -75,4 +75,44 @@ out=$(cd "$W" && HERMES_FRESHNESS_CHECK=1 GH_TOKEN=x "$NG/bin/hermes-launch" --d
 out=$(cd "$W" && env -u GH_TOKEN HERMES_FRESHNESS_CHECK=1 "$HH/bin/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 1 ] && say "$out" | grep -q 'GH_TOKEN is not set' && ok "launch: refusals are unchanged by the check" \
   || bad "launch: refusal" "rc=$rc $out"
-unset -f G fresh_launch; unset HB HS HH NG out0 head_before
+
+# --- bead ckh: the fetch never waits on a credential or ssh host-key prompt ---
+# Stub git: `fetch` records its prompt settings, then fails at once when terminal prompts are off
+# (as real git does) or else "waits for an answer" (sleeps); every other git command is the real one.
+REAL_GIT=$(command -v git); mkdir -p "$tmp/promptgit"
+cat > "$tmp/promptgit/git" <<S
+#!/bin/sh
+case " \$* " in
+  *" fetch "*)
+    printf 'GIT_TERMINAL_PROMPT=%s GIT_SSH_COMMAND=%s\n' "\${GIT_TERMINAL_PROMPT:-}" "\${GIT_SSH_COMMAND:-}" > "$tmp/promptgit.env"
+    [ "\${GIT_TERMINAL_PROMPT:-}" = 0 ] && { echo "fatal: could not read Username: terminal prompts disabled" >&2; exit 128; }
+    sleep 30; exit 128 ;;
+esac
+exec "$REAL_GIT" "\$@"
+S
+chmod +x "$tmp/promptgit/git"
+began=$(date +%s)
+fresh_launch PATH="$tmp/promptgit:$PATH" GIT_SSH_COMMAND="ssh -o ConnectTimeout=5"
+took=$(( $(date +%s) - began ))
+[ $rc -eq 0 ] && [ "$took" -lt 5 ] && say "$out" | grep -q 'warning: could not fetch origin/main for hermes-harness (git fetch exit 128)' \
+  && ok "launch: a fetch that would prompt fails at once with one warning (${took}s)" \
+  || bad "launch: prompt fails fast" "rc=$rc took=${took}s $out"
+grep -q 'GIT_TERMINAL_PROMPT=0 ' "$tmp/promptgit.env" && grep -q 'BatchMode=yes' "$tmp/promptgit.env" \
+  && grep -q 'ConnectTimeout=5' "$tmp/promptgit.env" \
+  && ok "launch: the fetch runs with prompts off and ssh BatchMode, keeping GIT_SSH_COMMAND's options" \
+  || bad "launch: fetch prompt env" "$(cat "$tmp/promptgit.env" 2>/dev/null)"
+
+# --- bead ckh: no python3 -> the warning names python3, not a git exit code ---
+NOPY="$tmp/nopy"; mkdir -p "$NOPY"
+for d in /usr/bin /bin "$(dirname "$REAL_GIT")"; do
+  for f in "$d"/*; do
+    n=${f##*/}; case $n in python*) continue ;; esac
+    [ -e "$NOPY/$n" ] || ln -s "$f" "$NOPY/$n" 2>/dev/null
+  done
+done
+fresh_launch PATH="$tmp/nohost:$NOPY"
+[ $rc -eq 0 ] && say "$out" | grep -q 'warning: could not fetch origin/main for hermes-harness (python3 not found' \
+  && ! say "$out" | grep -q 'exit 127' && say "$out" | grep -q 'DRY RUN: would start' \
+  && ok "launch: without python3 the fetch warning names python3 and the launch continues" \
+  || bad "launch: no python3" "rc=$rc $out"
+unset -f G fresh_launch; unset HB HS HH NG NOPY REAL_GIT out0 head_before began took

@@ -6,17 +6,25 @@
 # a "warning: ..." line on stderr for each of: behind origin/main (with the pull command), a failed
 # fetch, not on branch main, uncommitted changes to tracked files. Prints nothing when all is well,
 # or when the harness is not a git checkout. Never pulls (another loop may be running from the same
-# checkout) and always returns 0: a warning never changes the launch.
+# checkout) and always returns 0: a warning never changes the launch. The fetch never prompts
+# (GIT_TERMINAL_PROMPT=0, ssh BatchMode=yes) and a missing python3 is named in the warning.
 # HERMES_FRESHNESS_CHECK=0 skips it; HERMES_FRESHNESS_TIMEOUT (default 10s) limits the fetch.
 
 hh_harness_freshness() {
   local h=$1 limit=${HERMES_FRESHNESS_TIMEOUT:-10s} branch behind rc
   [ "${HERMES_FRESHNESS_CHECK:-1}" = 0 ] && return 0
   [ "$(git -C "$h" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$h" && pwd -P)" ] || return 0
-  python3 "$h/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
-    git -C "$h" fetch -q origin main >/dev/null 2>&1; rc=$?
+  local why=""
+  if ! command -v python3 >/dev/null 2>&1; then
+    rc=127; why="python3 not found; it runs the fetch's time limit"
+  else
+    # Never wait on a credential or ssh host-key prompt: fail at once instead (bead ckh).
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes" \
+      python3 "$h/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
+      git -C "$h" fetch -q origin main >/dev/null 2>&1 </dev/null; rc=$?
+  fi
   if [ "$rc" != 0 ]; then
-    local why="git fetch exit $rc"; [ "$rc" = 124 ] && why="timed out after $limit"
+    [ -n "$why" ] || why="git fetch exit $rc"; [ "$rc" = 124 ] && why="timed out after $limit"
     echo "warning: could not fetch origin/main for hermes-harness ($why); its checkout may be out of date" >&2
   elif behind=$(git -C "$h" rev-list --count HEAD..origin/main 2>/dev/null) && [ "${behind:-0}" -gt 0 ]; then
     echo "warning: hermes-harness is $behind commit(s) behind origin/main; run git -C '$h' pull --ff-only first" >&2

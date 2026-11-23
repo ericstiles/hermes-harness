@@ -33,10 +33,10 @@ eq "timestamps: raw run log still classifies exactly as before (11 fixtures)" "$
 rm -rf "$W/logs"
 out=$(STUB_FIXTURE="$FX/ok_done.log" runit "$BIN/hermes-run" 1 2>&1)
 t=$(only_timed)
-[ -n "$t" ] && [ -s "$t" ] && ! grep -qv '^\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\] ' "$t" \
+[ -n "$t" ] && [ -s "$t" ] && ! grep -qvE '^\[[0-9]{2}:[0-9]{2}:[0-9]{2}(,[^] ]+)?\] ' "$t" \
   && ok "timestamps: hermes-run writes run-*.timed.txt with [HH:MM:SS] on every line" || bad "timestamps: timed twin" "$(ls "$W/logs"; head -3 "$t" 2>/dev/null)"
-grep -q '^\[[0-9:]*\] RUN_RESULT=OK_DONE$' "$t" 2>/dev/null && ok "timestamps: timed twin ends with the RUN_RESULT" || bad "timestamps: timed RUN_RESULT" "$(tail -3 "$t" 2>/dev/null)"
-say "$out" | grep -q '^\[[0-9:]*\] Resume this session with:' && ok "timestamps: terminal shows timestamped Hermes output" || bad "timestamps: terminal" "$out"
+grep -q '^\[[0-9:]*,learn_hermes-abc\] RUN_RESULT=OK_DONE$' "$t" 2>/dev/null && ok "timestamps: timed twin ends with the RUN_RESULT, stamped with the claimed bead" || bad "timestamps: timed RUN_RESULT" "$(tail -3 "$t" 2>/dev/null)"
+say "$out" | grep -q '^\[[0-9:]*,learn_hermes-abc\] Resume this session with:' && ok "timestamps: terminal shows timestamped Hermes output, with the claimed bead" || bad "timestamps: terminal" "$out"
 
 # run summary: one RUN_TIME per run, a total before FINAL_RESULT; never in the raw log
 fx_issue=$(sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' "$FX/ok_done.log" | head -n 1)

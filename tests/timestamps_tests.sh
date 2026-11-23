@@ -75,3 +75,21 @@ print(env(None), env("90m"), env("30s"), env("2h"), env("45"), env("0"), env("so
 eq "timestamps: HERMES_STALL_WARN parses Ns/Nm/Nh, default 10m" "$out" "600.0 5400.0 30.0 7200.0 45.0 0.0 600.0 10m 1m30s 2h"
 grep -q "HERMES_STALL_WARN='soon'" "$tmp/ts13.err" && ok "timestamps: a bad HERMES_STALL_WARN warns once" \
   || bad "timestamps: a bad HERMES_STALL_WARN warns once" "$(cat "$tmp/ts13.err")"
+
+# bead id in the stamp (mr4): [HH:MM:SS,<id>] from the claim line on; before it, just the time
+printf 'a\n  ┊ 💻 $ bd update om-abc.1 --claim\nb\n' | HH_TS_FAKE_CLOCK="100 101 140" tsf --log "$tmp/ts14.log" > "$tmp/ts14.out"
+want=$(printf '[00:01:40] a\n[00:01:41,om-abc.1]   ┊ 💻 $ bd update om-abc.1 --claim\n[00:02:20,om-abc.1] (+39s)\n[00:02:20,om-abc.1] b')
+eq "timestamps: after a claim every line (and gap line) carries the bead id" "$(cat "$tmp/ts14.out")" "$want"
+eq "timestamps: the bead id is in the ts log too" "$(cat "$tmp/ts14.log")" "$want"
+printf 'a\n' | HH_TS_FAKE_CLOCK=100 tsf --id x-9 > "$tmp/ts15.out"
+eq "timestamps: --id stamps the id from the first line (a resumed session)" "$(cat "$tmp/ts15.out")" "[00:01:40,x-9] a"
+printf 'run bd update <id> --claim\nb\n' | HH_TS_FAKE_CLOCK="100 101" tsf > "$tmp/ts16.out"
+eq "timestamps: a placeholder like <id> in prose is not an id" "$(cat "$tmp/ts16.out")" "$(printf '[00:01:40] run bd update <id> --claim\n[00:01:41] b')"
+printf 'bd update p-1 --claim\nbd update p-2 --claim\n' | HH_TS_FAKE_CLOCK="100 101" tsf --id p-0 > "$tmp/ts17.out"
+eq "timestamps: a later claim replaces the current id" "$(cut -d' ' -f1 "$tmp/ts17.out" | tr '\n' ' ')" "[00:01:40,p-1] [00:01:41,p-2] "
+( printf 'bd update s-1 --claim\n'; sleep 1.5; printf 'b\n' ) | HERMES_STALL_WARN=1s HERMES_TS_MIN_GAP=60 tsf > "$tmp/ts18.out"
+grep -qE '^\[[0-9:]{8},s-1\] no output for 1s' "$tmp/ts18.out" && ok "timestamps: the stall warning carries the bead id" \
+  || bad "timestamps: stall warning id" "$(cat "$tmp/ts18.out")"
+out=$(bash -c ". '$ROOT/lib/runtime.sh'; hh_stamp_line 'R=1' om-2; hh_stamp_line 'R=2'; hh_stamp_line 'R=3' ''")
+say "$out" | sed -E 's/[0-9]{2}:[0-9]{2}:[0-9]{2}/T/' | tr '\n' '|' | grep -qx '\[T,om-2\] R=1|\[T\] R=2|\[T\] R=3|' \
+  && ok "timestamps: hh_stamp_line takes an optional bead id" || bad "timestamps: hh_stamp_line id" "$out"

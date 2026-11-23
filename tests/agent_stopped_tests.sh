@@ -54,3 +54,12 @@ out=$(HERMES_LOG_DIR="$tmp/l3" runit "$BIN/hermes-supervise" "$SF")
 say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q "^WHY=.*hermes --resume $SID" \
   && ok "agent_stopped: supervise asks the human and shows the resume command" || bad "agent_stopped: supervise" "$out"
 rm -rf "$W/logs"
+# mr4: a resumed session never claims again; its timed log still carries the bead from the first log
+rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
+grep -v -- '--claim' "$FX/ok_done.log" > "$tmp/ok_noclaim.log"
+STUB_FIXTURE="$SF" STUB_FIXTURE_2="$tmp/ok_noclaim.log" runit "$BIN/hermes-run" 1 >/dev/null 2>&1
+t2=$(ls "$W"/logs/run-*.timed.txt 2>/dev/null | sed -n 2p)
+[ -n "$t2" ] && ! grep -qvE '^\[[0-9:]{8},organize_music-6ut\.10\] ' "$t2" \
+  && ok "agent_stopped: the resumed run's timed log is stamped with the first run's bead" \
+  || bad "agent_stopped: resumed id" "$(ls "$W"/logs; head -3 "$t2" 2>/dev/null)"
+rm -rf "$W/logs"

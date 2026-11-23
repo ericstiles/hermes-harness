@@ -112,7 +112,7 @@ hermes-launch --dry-run && hermes-launch
 ## Env
 `GITHUB_REPO` (default: parsed from `origin`), `RUN_TIMEOUT` (90m), `HERMES_EXTEND` (20m, 0 = hard limit), `HERMES_EXTEND_CAP` (180m),
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_WRAPUP_TIMEOUT` (15m, 0 disables), `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
-`HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_STALL_WARN` (10m; 0 = off), `HERMES_CONTEXT_TIMEOUT` (30s, the session export behind the `CONTEXT:` usage line), `HERMES_BASELINE_TIMEOUT` (15s, `hermes prompt-size` behind the `CONTEXT: baseline` line), `HERMES_CONTEXT_WINDOW` (context window for the usage line; looked up when unset, never guessed), `HERMES_TEST_CMD` (for `hermes-status --tests`),
+`HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_STALL_WARN` (10m; 0 = off), `HERMES_CONTEXT_TIMEOUT` (30s, the session export behind the `CONTEXT:` usage line), `HERMES_BASELINE_TIMEOUT` (15s, `hermes prompt-size` behind the `CONTEXT: baseline` line), `HERMES_BEADS_TIMEOUT` (15s, each `bd stats`/`bd ready` behind the `BEADS:` lines), `HERMES_CONTEXT_WINDOW` (context window for the usage line; looked up when unset, never guessed), `HERMES_TEST_CMD` (for `hermes-status --tests`),
 `REVIEWER_GH_TOKEN`, `REVIEWER_AGENT`, `REVIEWER_MODEL`, `OLLAMA_HOST_URL`,
 `HERMES_REVIEW_PYTHON` (for `hermes-review`).
 

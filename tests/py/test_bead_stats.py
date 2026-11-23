@@ -39,6 +39,16 @@ def test_empty_queue_says_next_none() -> None:
     assert line.startswith("BEADS: next none | ready 24 ")
 
 
+def test_unknown_next_says_unavailable_not_none() -> None:
+    line = bs.start_line(bs.parse_stats(STATS), bs.NEXT_UNAVAILABLE)
+    assert line.startswith("BEADS: next unavailable | ready 24 ")
+    cli = subprocess.run(
+        [sys.executable, str(SCRIPT), "start", STATS, ""],
+        capture_output=True, text=True, timeout=30, check=False,
+    )  # fmt: skip
+    assert cli.stdout.startswith("BEADS: next unavailable | ready 24 ")
+
+
 def test_loop_summary_line() -> None:
     assert bs.summary_line(bs.parse_stats(STATS), ["r-ab1.2", "r-c3", "r-ab1.2"]) == (
         "BEADS: loop worked 2 issue(s): r-ab1.2 r-c3 | closed 35 of 64 "

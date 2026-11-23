@@ -113,6 +113,10 @@ bd update d-4 --claim; bd update e-5 --claim|d-4
 bd update f-6 --claim-it|f-6
 CASES
 eq "timestamps: tsfilter.py and claimed_issue agree on the claimed id ($cases cases)" "$agree" "$cases"
+# a missing log: no id and nothing on stderr (the redirection fails before 2>/dev/null applies, bead 9e2)
+err=$(hh_claimed_issue "$tmp/no-such.log" 2>&1 >/dev/null); out=$(hh_claimed_issue "$tmp/no-such.log" 2>/dev/null)
+eq "timestamps: claimed_issue on a missing log prints nothing on stderr" "$err" ""
+eq "timestamps: claimed_issue on a missing log returns no id" "$out" ""
 ( printf 'bd update s-1 --claim\n'; sleep 1.5; printf 'b\n' ) | HERMES_STALL_WARN=1s HERMES_TS_MIN_GAP=60 tsf > "$tmp/ts18.out"
 grep -qE '^\[[0-9:]{8},s-1\] no output for 1s' "$tmp/ts18.out" && ok "timestamps: the stall warning carries the bead id" \
   || bad "timestamps: stall warning id" "$(cat "$tmp/ts18.out")"

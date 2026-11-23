@@ -67,6 +67,12 @@ sed 's/learn_hermes-[a-z0-9]*/widgets-abc/g' "$FX/timeout_killed.log" > "$tmp/wi
 out=$(HERMES_LOG_DIR="$tmp/l2" sup "$tmp/widgets_timeout.log")
 say "$out" | grep -q '^ISSUE=widgets-abc$' && ok "issue id parsed for a non-learn_hermes prefix" || bad "issue prefix" "$out"
 say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q 'split' && ok "2nd timeout -> split issue" || bad "split rule" "$out"
+# the issue is the run's FIRST real claim, read with hermes-run's pattern (lib/runtime.sh
+# hh_claimed_issue): a "<id>" placeholder or "xbd update" in prose before it is not a claim (bead 9e2)
+{ echo 'AGENTS.md: run bd update <id> --claim, then work'; echo 'xbd update widgets-no --claim'
+  cat "$tmp/widgets_timeout.log"; } > "$tmp/widgets_prose.log"
+out=$(HERMES_LOG_DIR="$tmp/l2" sup "$tmp/widgets_prose.log")
+say "$out" | grep -q '^ISSUE=widgets-abc$' && ok "supervise skips a <id> placeholder and xbd before the real claim" || bad "supervise claim pattern" "$out"
 eq "target repo status unchanged by supervise" "$(git -C "$W" status --porcelain)" "$before"
 out=$(cd "$tmp" && "$BIN/hermes-supervise" 2>&1)
 say "$out" | grep -q '^ACTION=ASK_HUMAN$' && ok "supervise outside a git repo asks the human" || bad "no repo" "$out"

@@ -23,7 +23,8 @@ hh_elapsed() { # <seconds> -> 38s | 41m12s | 2h05m (same style as lib/tsfilter.p
 HH_CLAIM_ERE='(^|[^A-Za-z0-9_])bd update [A-Za-z0-9][A-Za-z0-9._-]* --claim([^A-Za-z0-9_]|$)'
 hh_claimed_issue() { # <logfile> -> the run's bead: the FIRST id it claimed, empty if none
   # First, not last: a review-fix run's later `bd update B --claim` marks a side bead (bead 97j).
-  tr -d '\r' < "$1" 2>/dev/null | grep -oE "$HH_CLAIM_ERE" | head -n 1 \
+  [ -r "$1" ] || return 0 # a missing log: no id, and no shell error (2>/dev/null can't hide it)
+  tr -d '\r' < "$1" | grep -oE "$HH_CLAIM_ERE" | head -n 1 \
     | sed -E 's/.*bd update ([A-Za-z0-9][A-Za-z0-9._-]*) --claim.*/\1/'
 }
 

@@ -8,7 +8,7 @@ on the **current directory's git repo** (or `HERMES_REPO`), never on their own f
 |---|---|
 | `hermes-run [N]` | Work up to N beads issues, one Hermes run each; classify every run; release stale claims after a timeout |
 | `hermes-setup` | Copy the baseline files (shared `AGENTS.md`, `AGENTS_LOCAL.md` stub, `CLAUDE.md` block, `.gitignore` lines) into a target repo; `--check` reports drift. Never touches an existing `AGENTS_LOCAL.md` |
-| `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active or `GH_TOKEN` is unset |
+| `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active or `GH_TOKEN` is unset; warns (never pulls) when the harness checkout is behind `origin/main`, off `main` or dirty (`HERMES_FRESHNESS_CHECK=0` skips, `HERMES_FRESHNESS_TIMEOUT` 10s) |
 | `hermes-status [--tests]` | Read-only snapshot: origin/main, PRs, beads, active run, newest log |
 | `hermes-supervise [log]` | Read-only diagnosis: `CLASS=`, `ACTION=`, `NEXT=` |
 | `hermes-review [--dry-run] [--watch N]` | Reviewer agent: review each open `bd/*` PR, rebase-merge and close its bead, or comment and file `tech-debt` beads |

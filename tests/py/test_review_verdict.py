@@ -29,6 +29,33 @@ BAD = {
 }
 
 
+# The AGENTS.md issue template (bead c0i): description, design and acceptance sections.
+TEMPLATE_SECTIONS = (
+    "## Goal", "## Why", "## Current state", "## Repro", "## In scope", "## Expected to modify",
+    "## Out of scope / Forbidden", "## Base branch", "## Tests first",
+)  # fmt: skip
+DESIGN_SECTIONS = ("## Approach", "## Invariants", "## Edge cases", "## Produces for downstream")
+OLD_HEADINGS = ("## Problem", "## Fix scope", "## Constraints", "## Dependencies", "## Where")
+
+
+def assert_follows_issue_template(args: list[str]) -> None:
+    body = args[args.index("-d") + 1]
+    for section in TEMPLATE_SECTIONS:
+        assert section in body, section
+    positions = [body.index(s) for s in TEMPLATE_SECTIONS]
+    assert positions == sorted(positions), "sections out of template order"
+    for old in OLD_HEADINGS:
+        assert old not in body, old
+    assert "<placeholder>" not in body
+    design = args[args.index("--design") + 1]
+    for section in DESIGN_SECTIONS:
+        assert section in design, section
+    acceptance = args[args.index("--acceptance") + 1].splitlines()
+    assert acceptance and all(line.startswith("[ ] ") for line in acceptance), acceptance
+    assert any("quality gate" in line for line in acceptance)
+    assert any("git diff --stat" in line for line in acceptance)
+
+
 def test_parse_verdict_from_structured_output() -> None:
     raw = json.dumps({"type": "result", "structured_output": BAD})
     verdict = parse_verdict(raw)
@@ -83,14 +110,8 @@ def test_debt_issue_args() -> None:
     assert args[args.index("--acceptance") + 1]
 
 
-def test_debt_issue_has_all_eight_template_sections() -> None:
-    args = debt_issue_args(Problem("src/a.py", 3, "T", "D"), "om-1", 7)
-    body = args[args.index("-d") + 1]
-    for section in (
-        "## Problem", "## Repro", "## Fix scope", "Do NOT change", "## Base branch",
-        "## Tests first", "## Acceptance", "## Constraints", "## Dependencies",
-    ):  # fmt: skip
-        assert section in body, section
+def test_debt_issue_follows_the_agents_md_issue_template() -> None:
+    assert_follows_issue_template(debt_issue_args(Problem("src/a.py", 3, "T", "D"), "om-1", 7))
 
 
 def _wrap(payload: dict[str, object]) -> str:

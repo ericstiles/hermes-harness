@@ -110,29 +110,64 @@ def review_comment(verdict: Verdict, head_sha: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# The AGENTS.md issue template (description `-d`, `--design`, `--acceptance`): every bead
+# hermes-review files fills each section (bead c0i).
+ISSUE_SECTIONS = (
+    "Goal", "Why", "Current state", "Repro", "In scope", "Expected to modify",
+    "Out of scope / Forbidden", "Base branch", "Tests first",
+)  # fmt: skip
+DESIGN_SECTIONS = ("Approach", "Invariants", "Edge cases", "Produces for downstream")
+GATE_CHECK = "[ ] the quality gate from AGENTS_LOCAL.md passes"
+DIFF_CHECK = (
+    "[ ] git diff --stat shows only the Expected-to-modify paths (or the PR body explains "
+    "each other one)"
+)
+
+
+def template_text(names: tuple[str, ...], text: dict[str, str]) -> str:
+    """`## <name>` sections in template order; every name must be filled, no others."""
+    missing = [n for n in names if not text.get(n, "").strip()]
+    unknown = sorted(set(text) - set(names))
+    if missing or unknown:
+        raise ValueError(f"issue template: missing {missing}, unknown {unknown}")
+    return "\n\n".join(f"## {n}\n{text[n].strip()}" for n in names) + "\n"
+
+
 def debt_issue_args(problem: Problem, bead: str, pr: int) -> list[str]:
-    """`bd` arguments that file one tech-debt issue (all 8 AGENTS.md sections) for a problem."""
+    """`bd` arguments that file one tech-debt issue (the AGENTS.md template) for a problem."""
     where = problem.location() or "(see detail)"
-    acceptance = (
-        f"A regression test for '{problem.title}' at {where} fails on the current code and "
-        "passes after the fix; the repo's quality gate passes."
-    )
-    body = (
-        f"## Problem\n{problem.title}\n\nWhere: `{where}`\n\n{problem.detail or problem.title}\n\n"
-        f"Found by the reviewer agent on PR #{pr} for {bead}.\n\n"
-        f"## Repro\nCheck out PR #{pr} (or `main` once merged) and inspect `{where}`; "
-        "the review comment on the PR has the observed behaviour.\n\n"
-        "## Fix scope\nOnly what is needed to resolve the problem above.\n"
-        "Do NOT change: unrelated files, public interfaces not named above, existing tests "
-        "(except to add the regression test).\n\n"
-        "## Base branch\n`main`\n\n"
-        "## Tests first (TDD)\nWrite a regression test that FAILS on the current code for the "
-        "reason above, then fix until it passes. Paste the failing output in the PR body.\n\n"
-        f"## Acceptance\n{acceptance}\n\n"
-        "## Constraints\nThe repo's quality gate and conventions (see AGENTS.md); existing "
-        "tests keep passing; conventional commits.\n\n"
-        f"## Dependencies\ndiscovered-from: {bead}\n"
-    )
+    detail = problem.detail or problem.title
+    body = template_text(ISSUE_SECTIONS, {
+        "Goal": f"Fix: {problem.title} (at `{where}`).",
+        "Why": f"The reviewer agent found this on PR #{pr} for {bead}, outside that PR's "
+               "scope, so it was filed as tech debt instead of blocking the merge.",
+        "Current state": f"`{where}`: {detail}\n\nThe review comment on PR #{pr} has the "
+                         "observed behavior.",
+        "Repro": "N/A: the reviewer found this by reading the code; the regression test "
+                 "under Tests first is the repro.",
+        "In scope": f"Only what resolves the problem above, at `{where}`.",
+        "Expected to modify": f"`{problem.file or where}` and the test that covers it.",
+        "Out of scope / Forbidden": "Unrelated files, public interfaces not named above, and "
+                                    "existing tests (except to add the regression test). "
+                                    "Anything larger needs its own bead.",
+        "Base branch": "`main`",
+        "Tests first": "Write a regression test that FAILS on the current code for the reason "
+                       "above, then fix until it passes. Name it in the PR body and paste the "
+                       "failing output from before the fix.",
+    })  # fmt: skip
+    design = template_text(DESIGN_SECTIONS, {
+        "Approach": f"Keep the fix local to `{where}`, reusing the helpers already there.",
+        "Invariants": "Existing tests keep passing.",
+        "Edge cases": "N/A: none known beyond the problem above; the review comment may name "
+                      "more.",
+        "Produces for downstream": "N/A: a local fix with no new interface.",
+    })  # fmt: skip
+    acceptance = "\n".join((
+        f"[ ] a regression test for '{problem.title}' at {where} fails on the current code "
+        "and passes after the fix",
+        GATE_CHECK,
+        DIFF_CHECK,
+    ))  # fmt: skip
     return [
         "create",
         f"Tech debt from PR #{pr}: {problem.title}"[:200],
@@ -146,6 +181,8 @@ def debt_issue_args(problem: Problem, bead: str, pr: int) -> list[str]:
         f"discovered-from:{bead}",
         "-d",
         body,
+        "--design",
+        design,
         "--acceptance",
         acceptance,
         "--silent",

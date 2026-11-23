@@ -9,7 +9,7 @@ HELP_DIR="$tmp/help-cwd"; mkdir -p "$HELP_DIR"
 HELP_SCRIPTS=(
   "$BIN/hermes-launch" "$BIN/hermes-review" "$BIN/hermes-run" "$BIN/hermes-setup"
   "$BIN/hermes-status" "$BIN/hermes-supervise"
-  "$ROOT/lib/watchdog.py" "$ROOT/lib/tsfilter.py" "$ROOT/lib/context_usage.py" "$ROOT/lib/hooks/bd_notes_guard.py"
+  "$ROOT/lib/watchdog.py" "$ROOT/lib/tsfilter.py" "$ROOT/lib/context_usage.py" "$ROOT/lib/bead_stats.py" "$ROOT/lib/hooks/bd_notes_guard.py"
 )
 for script in "${HELP_SCRIPTS[@]}"; do
   name=$(basename "$script")

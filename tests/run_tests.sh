@@ -158,6 +158,12 @@ if [ "$1 $2" = "epic close-eligible" ]; then
   list=$(for i in $ids; do printf '"%s",' "$i"; done); list=${list%,}
   printf '{"closed": [%s], "count": 0, "reason": "x", "schema_version": 1}\n' "$list"
 fi
+# stats / ready --json: $STUB_STATS / $STUB_READY (canned JSON) if set; STUB_BD_STATS_HANG=1 hangs
+if [ "$1" = stats ]; then
+  [ "${STUB_BD_STATS_HANG:-0}" = 1 ] && { sleep 60; exit 0; }
+  [ -n "$STUB_STATS" ] && printf '%s\n' "$STUB_STATS"
+fi
+[ "$1" = ready ] && [ -n "$STUB_READY" ] && printf '%s\n' "$STUB_READY"
 exit 0
 S
 cat > "$tmp/bin/gh" <<'S'
@@ -271,6 +277,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/context_tests.sh"
   # a finished epic left open must not end the loop QUEUE_EMPTY (bd epic close-eligible)
   . "$HERE/epics_tests.sh"
+  # the bead being worked and the queue statistics (lib/bead_stats.py)
+  . "$HERE/bead_stats_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
@@ -288,7 +296,7 @@ if command -v uv >/dev/null 2>&1; then
   # Lint + format with the repo's ruff.toml (pinned ruff, so results do not drift).
   for lint in "check --output-format concise" "format --check"; do
     # shellcheck disable=SC2086  # $lint is two words on purpose
-    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py lib/context_usage.py tests/py 2>&1); rc=$?
+    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py lib/context_usage.py lib/bead_stats.py tests/py 2>&1); rc=$?
     [ $rc -eq 0 ] && ok "ruff ${lint%% *}: clean" || bad "ruff ${lint%% *}" "$(echo "$out" | tail -n 20)"
   done
 else

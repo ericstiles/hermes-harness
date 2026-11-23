@@ -39,6 +39,14 @@ def test_empty_queue_says_next_none() -> None:
     assert line.startswith("BEADS: next none | ready 24 ")
 
 
+def test_unavailable_is_a_sentinel_not_a_string() -> None:
+    assert not isinstance(bs.NEXT_UNAVAILABLE, str)
+    with pytest.raises(TypeError):
+        bs.start_line(bs.parse_stats(STATS), "unavailable")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        bs.start_line(bs.parse_stats(STATS), "oops")  # type: ignore[arg-type]
+
+
 def test_unknown_next_says_unavailable_not_none() -> None:
     line = bs.start_line(bs.parse_stats(STATS), bs.NEXT_UNAVAILABLE)
     assert line.startswith("BEADS: next unavailable | ready 24 ")

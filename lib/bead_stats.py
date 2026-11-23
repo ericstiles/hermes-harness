@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
+from enum import Enum
 
 PREFIX = "BEADS:"
 TITLE_MAX = 60
@@ -98,14 +99,24 @@ def parse_next(text: str) -> Next | None:
     return Next(str(first.get("id", "?")), title, first.get("priority", "?"))
 
 
-NEXT_UNAVAILABLE = "unavailable"  # `bd ready` failed: unknown, which is not an empty queue
+class _Unavailable(Enum):
+    """`bd ready` failed: the next bead is unknown, which is not an empty queue."""
+
+    UNAVAILABLE = "unavailable"
 
 
-def start_line(stats: Stats, nxt: Next | str | None) -> str:
+NEXT_UNAVAILABLE = _Unavailable.UNAVAILABLE
+
+
+def start_line(stats: Stats, nxt: Next | _Unavailable | None) -> str:
     if isinstance(nxt, Next):
         head = f'next {nxt.id} "{nxt.title}" (P{nxt.priority})'
+    elif nxt is NEXT_UNAVAILABLE:
+        head = "next unavailable"
+    elif nxt is None:
+        head = "next none"
     else:
-        head = "next unavailable" if nxt == NEXT_UNAVAILABLE else "next none"
+        raise TypeError(f"next must be Next, NEXT_UNAVAILABLE or None, not {nxt!r}")
     return (
         f"{PREFIX} {head} | ready {stats.ready} in_progress {stats.in_progress} "
         f"blocked {stats.blocked} | open {stats.open} closed {stats.closed} of {stats.total} "

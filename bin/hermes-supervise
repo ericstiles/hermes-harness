@@ -40,6 +40,8 @@ hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 . "$HARNESS_HOME/lib/classify.sh"
 # shellcheck source=../lib/wrapup.sh
 . "$HARNESS_HOME/lib/wrapup.sh"
+# shellcheck source=../lib/runtime.sh
+. "$HARNESS_HOME/lib/runtime.sh" # hh_claimed_issue: the run's bead, as hermes-run reads it
 MAX_RELAUNCH=3; TIMEOUT_CAP=120
 
 if [ "${1:-}" = "--classify" ]; then hermes_classify "${2:?logfile}"; exit 0; fi
@@ -60,7 +62,7 @@ if [ -n "$wrapped" ]; then
   if hh_wip_saved "$log"; then wip=yes; else wip=no; fi
   [ -r "$wrapped" ] && work_log=$wrapped
 fi
-issue=$(tr -d '\r' < "$work_log" | sed -n 's/.*bd update \([^ ]*\) --claim.*/\1/p' | head -n 1)
+issue=$(hh_claimed_issue "$work_log")
 today=$(date +%Y%m%d)
 count_today() { # <issue> [class]
   [ -f "$STATE" ] || { echo 0; return; }

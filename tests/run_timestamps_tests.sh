@@ -83,8 +83,11 @@ say "$out" | grep -q "^== refused by hermes-review" && say "$out" | grep -q "^un
 mkdir -p "$tmp/refgh"; cat > "$tmp/refgh/gh" <<'GH'
 #!/bin/sh
 case "$1 $2" in
-  "pr list") echo '[{"number":47,"title":"feat(b8p.14): x","body":"","headRefName":"bd/r-b8p.14","headRefOid":"abc1234def","url":"u","isDraft":false}]' ;;
-  "pr view") printf '%s\n' '{"comments":[{"body":"<!-- pr-review-refused:abc1234def:0123456789 -->\n**Reviewer agent: not reviewed.** cannot identify the bead\n"}],"reviews":[]}' ;;
+  "pr list") echo '[{"number":47,"title":"feat(b8p.14): x","body":"","headRefName":"bd/r-b8p.14","headRefOid":"abc1234def","url":"u","isDraft":false},{"number":48,"title":"fix(r-c1): y","body":"","headRefName":"bd/r-c1","headRefOid":"new5678abc","url":"u","isDraft":false}]' ;;
+  "pr view") case "$3" in
+      47) printf '%s\n' '{"comments":[{"body":"<!-- pr-review-refused:abc1234def:0123456789 -->\n**Reviewer agent: not reviewed.** cannot identify the bead\n"}],"reviews":[]}' ;;
+      48) printf '%s\n' '{"comments":[{"body":"<!-- pr-review-refused:old0000aaa:0123456789 -->\n**Reviewer agent: not reviewed.** an old reason\n"}],"reviews":[]}' ;;
+    esac ;;
   *) exit 1 ;;
 esac
 GH
@@ -93,5 +96,7 @@ out=$(cd "$W" && PATH="$tmp/refgh:$tmp/bin:$PATH" GIT_ALLOW_PROTOCOL=file GIT_TE
 say "$out" | grep -q '^PR #47 (bd/r-b8p.14) refused at abc1234: cannot identify the bead$' \
   && ok "status: lists a PR refused at its current head, with the reason" \
   || bad "status: refused PR listed" "$(say "$out" | grep -A2 'refused by hermes-review')"
+say "$out" | grep -q '^PR #48 ' && bad "status: a PR whose head moved past its refusal is not listed" "$(say "$out" | grep '^PR #48')" \
+  || ok "status: a PR whose head moved past its refusal is not listed"
 eq "supervise: latest log is the raw log, not its timed twin" "$(runit "$BIN/hermes-supervise" | sed -n 's/^CLASS=//p')" BLOCKED
 rm -rf "$W/logs"

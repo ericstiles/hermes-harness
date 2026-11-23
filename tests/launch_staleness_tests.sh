@@ -91,6 +91,7 @@ esac
 exec "$REAL_GIT" "\$@"
 S
 chmod +x "$tmp/promptgit/git"
+# The stub would sleep 30s and the fetch limit is 10s: under 5s means it failed at once, not timed out.
 began=$(date +%s)
 fresh_launch PATH="$tmp/promptgit:$PATH" GIT_SSH_COMMAND="ssh -o ConnectTimeout=5"
 took=$(( $(date +%s) - began ))
@@ -101,6 +102,20 @@ grep -q 'GIT_TERMINAL_PROMPT=0 ' "$tmp/promptgit.env" && grep -q 'BatchMode=yes'
   && grep -q 'ConnectTimeout=5' "$tmp/promptgit.env" \
   && ok "launch: the fetch runs with prompts off and ssh BatchMode, keeping GIT_SSH_COMMAND's options" \
   || bad "launch: fetch prompt env" "$(cat "$tmp/promptgit.env" 2>/dev/null)"
+# GIT_SSH_COMMAND outranks core.sshCommand and GIT_SSH, so the fetch must build on them, not replace them
+# (review of PR #25): a key set in core.sshCommand is kept; a GIT_SSH wrapper is left alone.
+G -C "$HH" config core.sshCommand "ssh -i /k/id_test"; rm -f "$tmp/promptgit.env"
+(cd "$W" && env -u GIT_SSH_COMMAND -u GIT_SSH HERMES_FRESHNESS_CHECK=1 GH_TOKEN=x PATH="$tmp/promptgit:$PATH" \
+  "$HH/bin/hermes-launch" --dry-run >/dev/null 2>&1)
+grep -q 'GIT_SSH_COMMAND=ssh -i /k/id_test -o BatchMode=yes$' "$tmp/promptgit.env" \
+  && ok "launch: the fetch keeps the harness repo's core.sshCommand and adds BatchMode" \
+  || bad "launch: core.sshCommand kept" "$(cat "$tmp/promptgit.env" 2>/dev/null)"
+G -C "$HH" config --unset core.sshCommand; rm -f "$tmp/promptgit.env"
+(cd "$W" && env -u GIT_SSH_COMMAND HERMES_FRESHNESS_CHECK=1 GH_TOKEN=x GIT_SSH=/k/ssh-wrapper PATH="$tmp/promptgit:$PATH" \
+  "$HH/bin/hermes-launch" --dry-run >/dev/null 2>&1)
+grep -q 'GIT_SSH_COMMAND=$' "$tmp/promptgit.env" && grep -q 'GIT_TERMINAL_PROMPT=0 ' "$tmp/promptgit.env" \
+  && ok "launch: with GIT_SSH set the fetch leaves ssh alone (prompts still off)" \
+  || bad "launch: GIT_SSH left alone" "$(cat "$tmp/promptgit.env" 2>/dev/null)"
 
 # --- bead ckh: no python3 -> the warning names python3, not a git exit code ---
 NOPY="$tmp/nopy"; mkdir -p "$NOPY"

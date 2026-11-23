@@ -79,6 +79,21 @@ def test_latest_refusal_is_by_time_across_comments_and_reviews() -> None:
     ]
 
 
+def test_a_later_review_of_the_same_head_clears_the_refusal() -> None:
+    from pr_review.verdict import MARKER_PREFIX
+
+    def threads(cmd: Sequence[str], cwd: Path | None = None, env: object = None,
+                timeout: float | None = None) -> Result:  # fmt: skip
+        if list(cmd[:3]) == ["gh", "pr", "list"]:
+            return Result(0, json.dumps(PRS[:1]), "")
+        refused = {**_refusal("head47", "title disagrees"), "createdAt": "2026-11-22T09:00:00Z"}
+        reviewed = {"body": f"<!-- {MARKER_PREFIX}head47 -->\n**changes needed**",
+                    "createdAt": "2026-11-22T10:00:00Z"}  # fmt: skip
+        return Result(0, json.dumps({"comments": [refused, reviewed], "reviews": []}), "")
+
+    assert refused_lines(GitHub(threads)) == []
+
+
 def test_cli_list_refused_needs_no_model(monkeypatch: object, capsys: object) -> None:
     import pr_review.__main__ as cli
 

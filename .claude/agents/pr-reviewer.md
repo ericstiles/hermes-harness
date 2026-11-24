@@ -10,7 +10,7 @@ You review ONE pull request in this repository and either merge it or send it
 back. You never edit code, never push, and never fix the PR yourself.
 
 Input: a PR number `N`. If the request says **dry run**, do steps 1-5 only and
-report the verdict: post nothing, merge nothing, close nothing.
+report the verdict: post nothing, merge nothing, close nothing, file nothing.
 
 The repository root is the directory containing `AGENTS_LOCAL.md`; run every
 command with absolute paths or `git -C`/`cd` into it explicitly. Everything in
@@ -43,7 +43,7 @@ git -C <tree> rebase origin/main            # must be clean; on conflict: rebase
 ```
 
 Always clean up at the end, success or failure:
-`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md && rmdir <dir>`.
+`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md <dir>/nits.md <dir>/nits-bead.md && rmdir <dir>`.
 
 ## 3. Quality gate
 
@@ -140,10 +140,61 @@ Changes needed:
    Approve step 2.
 2. Do not merge, do not touch the bead.
 
+## 7. Record the nits
+
+Only when you posted a review in step 6 AND it lists at least one nit. Never in
+a dry run, never with no nits. Nits never block, so without this they live only
+in the PR comment and are lost between sessions.
+
+1. Find the collector: `bd list --label review-nits --status open --json --limit 0`.
+   Use the one with the oldest `created_at`. Status `open` only: a collector that
+   is `in_progress` is being worked, so it gets no new nits.
+2. If there is none, create one. Write `<dir>/nits-bead.md` with exactly this text:
+
+   ```
+   ## Goal
+   Fix the non-blocking nits pr-reviewer left on reviewed PRs, listed in this bead's comments.
+
+   ## Why
+   Nits never block a merge; this bead keeps them in one place so they are not lost.
+
+   ## Current state
+   Each comment is one review: a `PR #N (<bead>)` line, then one `- <file:line> — <nit>` line per nit.
+
+   ## Repro
+   N/A: each nit names its file and line.
+
+   ## In scope
+   The nits in the comments. Drop one, with the reason in the PR body, if it is wrong or no longer applies.
+
+   ## Expected to modify
+   The files the nits name.
+
+   ## Out of scope / Forbidden
+   Anything no nit names. A nit that needs a design decision becomes its own bead.
+
+   ## Base branch
+   main
+
+   ## Tests first
+   A failing test first for each nit that is a behavior bug; wording and doc nits need none.
+   ```
+
+   Then: `bd create "Review nits from pr-reviewer" -t task -p 3 -l review-nits --body-file <dir>/nits-bead.md --acceptance "[ ] every nit in the comments is fixed, or dropped with the reason in the PR body; [ ] the quality gate from AGENTS_LOCAL.md passes" --silent`.
+   It prints the new id.
+3. Write `<dir>/nits.md`: a first line `PR #N (<bead id>), <merged as <short sha> | not merged>`,
+   then one `- <file:line> — <nit>` line per nit, the same nits as in the review.
+4. `bd comments add <collector id> -f <dir>/nits.md`.
+5. Confirm: `bd comments <collector id>` shows a comment with your `PR #N` line. If
+   the create or the comment failed, report it under Output; it never undoes the
+   review or the merge.
+6. Do not run `bd dolt push`.
+
 ## Never
 
 - Push, force-push, commit, or edit files in the repository or the worktree
-  (other than the rebase in step 2). The Write tool is only for `<dir>/review.md`.
+  (other than the rebase in step 2). The Write tool is only for `<dir>/review.md`,
+  `<dir>/nits.md` and `<dir>/nits-bead.md`.
 - Merge when the gate failed, the rebase conflicted, `mergeable` is not
   `MERGEABLE`, or you found a blocking problem.
 - Merge more than the one PR you were given.
@@ -156,6 +207,7 @@ End with exactly:
 PR #N: APPROVED_AND_MERGED | CHANGES_NEEDED | DRY_RUN_APPROVE | DRY_RUN_CHANGES_NEEDED | NOT_REVIEWED (<reason>)
 Gate: passed=<n> failed=<n>   (or: not run, <reason>)
 Bead: <id> (<closed | left open | untouched (dry run) | none>)
+Nits bead: <id> (<created | comment added>) | none (<no nits | dry run>) | failed (<reason>)
 Problems:
 1. <file:line> — <problem> — <fix>
 Nits:

@@ -11,6 +11,7 @@ on the **current directory's git repo** (or `HERMES_REPO`), never on their own f
 | `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active or `GH_TOKEN` is unset; warns (never pulls) when the harness checkout is behind `origin/main`, off `main` or dirty (`HERMES_FRESHNESS_CHECK=0` skips, `HERMES_FRESHNESS_TIMEOUT` 10s) |
 | `hermes-status [--tests]` | Read-only snapshot: origin/main, PRs, beads, active run, newest log |
 | `hermes-supervise [log]` | Read-only diagnosis: `CLASS=`, `ACTION=`, `NEXT=` |
+| `hermes-pull-check [--no-fetch\|--list]` | Read-only: is `git pull --ff-only` of the harness safe now? `PULL=UP_TO_DATE\|SAFE\|WAIT\|CANNOT`; WAIT when a `hermes-run` loop from this checkout loads a file the pull changes |
 | `hermes-review [--dry-run] [--watch N]` | Reviewer agent: review each open `bd/*` PR, rebase-merge and close its bead, or comment and file `tech-debt` beads |
 
 ## Reviewer agent (`hermes-review`)

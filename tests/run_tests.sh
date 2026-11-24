@@ -135,6 +135,8 @@ out=$(cd "$W" && GH_TOKEN=x PATH="$tmp/linkbin:$PATH" hermes-launch --dry-run 2>
 say "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "works through a PATH symlink" || bad "symlink" "$out"
 # --- launch: warns when the harness checkout is behind origin/main (bead svz) ---
 . "$HERE/launch_staleness_tests.sh"
+# --- hermes-pull-check: is pulling the harness safe while loops run (bead anq) ---
+. "$HERE/pull_check_tests.sh"
 
 # --- hermes-run with stubbed hermes/bd/docker ---
 cat > "$tmp/bin/docker" <<'S'

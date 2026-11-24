@@ -1,0 +1,15 @@
+# Sample .envrc.local for a repo that uses hermes-harness: secrets and per-machine settings.
+# Copy to <target-repo>/.envrc.local (hermes-setup git-ignores it; never commit it), fill in
+# the token, then `direnv allow`. The committed .envrc loads it (templates/envrc.sample).
+
+# --- required ---
+export GH_TOKEN=REPLACE_WITH_A_FINE_GRAINED_TOKEN  # fine-grained, THIS repo only: contents + pull requests read/write; hermes-run forwards it into the sandbox
+
+# --- optional ---
+# export REVIEWER_GH_TOKEN=REPLACE_WITH_A_SECOND_TOKEN  # hermes-review posts and merges as this account instead of GH_TOKEN's
+# export OLLAMA_HOST_URL=http://127.0.0.1:11434          # Ollama for the local reviewer (default shown)
+# export HERMES_AGENT_LOG="$HOME/.hermes/logs/agent.log" # Hermes' agent log, read for the stop reason (default shown)
+
+# --- opt-in: the notes guard hook in interactive Hermes here too (README, "Notes guard hook") ---
+# export HERMES_HARNESS_RUN=1    # the guard acts in this repo, interactive sessions included (hermes-run sets it for its runs)
+# export HERMES_ACCEPT_HOOKS=1   # each Hermes started here approves config hooks (all of them, not only the guard)

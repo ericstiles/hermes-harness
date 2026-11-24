@@ -98,7 +98,14 @@ Symlinks onto PATH also work. Check with `which hermes-launch`.
    | `AGENTS_LOCAL.md` | created from `templates/AGENTS_LOCAL.md` only if missing; an existing one is never touched. Fill in the quality gate, stack and repo rules here |
    | `CLAUDE.md` | a managed block between `HERMES-HARNESS` markers: `@AGENTS_LOCAL.md` plus `templates/CLAUDE_SNIPPET.md`; your text outside it is kept |
    | `.gitignore` | adds `logs/` (run logs, lock and relaunch counters) and `.envrc.local` if missing |
-3. `.envrc.local` (git-ignored): `export GH_TOKEN=...` (fine-grained, that repo only); `direnv allow`.
+3. direnv files, from the commented samples:
+   - `.envrc` (committed, no secrets) from [`templates/envrc.sample`](templates/envrc.sample):
+     it loads `.envrc.local` and lists every optional setting, all commented out.
+   - `.envrc.local` (git-ignored) from [`templates/envrc.local.sample`](templates/envrc.local.sample):
+     `GH_TOKEN` (required; fine-grained, that repo only), optional `REVIEWER_GH_TOKEN` and
+     the per-machine opt-ins.
+
+   Then `direnv allow`.
 4. Optional: allow `Bash(hermes-status:*)`, `Bash(hermes-supervise:*)`, `Bash(hermes-launch:*)`
    in `~/.claude/settings.json`.
 5. Sandbox image with that project's language tools (Hermes `terminal.docker_image`).
@@ -110,6 +117,9 @@ hermes-launch --dry-run && hermes-launch
 ```
 
 ## Env
+Each setting, with its default and what it does, is in [`templates/envrc.sample`](templates/envrc.sample)
+(per repo) and [`templates/envrc.local.sample`](templates/envrc.local.sample) (secrets, per machine).
+
 `GITHUB_REPO` (default: parsed from `origin`), `RUN_TIMEOUT` (90m), `HERMES_EXTEND` (20m, 0 = hard limit), `HERMES_EXTEND_CAP` (180m),
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_WRAPUP_TIMEOUT` (15m, 0 disables), `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
 `HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_STALL_WARN` (10m; 0 = off), `HERMES_CONTEXT_TIMEOUT` (30s, the session export behind the `CONTEXT:` usage line), `HERMES_BASELINE_TIMEOUT` (15s, `hermes prompt-size` behind the `CONTEXT: baseline` line), `HERMES_BEADS_TIMEOUT` (15s, each `bd stats`/`bd ready` behind the `BEADS:` lines), `HERMES_CONTEXT_WINDOW` (context window for the usage line; looked up when unset, never guessed), `HERMES_TEST_CMD` (for `hermes-status --tests`),

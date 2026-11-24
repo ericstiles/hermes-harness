@@ -43,6 +43,8 @@ eq "supervise --classify needs no repo" "$(cd "$tmp" && "$BIN/hermes-supervise" 
 . "$HERE/notes_guard_tests.sh"
 # --- hermes-setup: baseline files for a target repo (AGENTS.md, AGENTS_LOCAL.md, CLAUDE.md, .gitignore) ---
 . "$HERE/setup_tests.sh"
+# --- sample .envrc / .envrc.local for target repos (templates/envrc*.sample) ---
+. "$HERE/envrc_samples_tests.sh"
 # --- every runnable script answers -h / --help ---
 . "$HERE/help_tests.sh"
 # --- Claude Code merge guard hook: only `gh pr merge <N> --rebase` (.claude/hooks/gh_merge_guard.py) ---

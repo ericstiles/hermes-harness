@@ -1,0 +1,46 @@
+# Sample .envrc for a repo that uses hermes-harness (direnv; https://direnv.net).
+# Copy to <target-repo>/.envrc, uncomment what you need, commit it, then `direnv allow`.
+# Committed, so NO secrets here: tokens go in .envrc.local (templates/envrc.local.sample).
+# Every setting is optional; the value shown is the default.
+#
+# HERMES_HARNESS_RUN and HERMES_ACCEPT_HOOKS never go here: hermes-run sets the first for
+# its own runs, and both are per-machine opt-ins that belong in .envrc.local.
+
+source_env_if_exists .envrc.local
+
+# --- hermes-launch / hermes-run: which repo, how long a run may take ---
+# export GITHUB_REPO=owner/name          # GitHub repo for PRs (default: parsed from the origin remote)
+# export RUN_TIMEOUT=90m                 # per-run time limit; hermes-launch --timeout overrides it
+# export HERMES_EXTEND=20m               # extension per check while a run makes progress; 0 = hard limit
+# export HERMES_EXTEND_CAP=180m          # no run, extensions included, lives longer than this
+# export HERMES_RETRY_ON_TIMEOUT=0       # 1: retry a timed-out issue once with 2x the time limit
+# export HERMES_TIMEOUT_CAP=120m         # cap on that retry's doubled time limit
+# export HERMES_WRAPUP_TIMEOUT=15m       # after a timeout or crash, resume this long to save WIP; 0 = off
+# export HERMES_UNCLAIM_ON_TIMEOUT=1     # after a timeout or crash, release the claim; 0 = keep it
+# export HERMES_RESUME_ON_STOP=1         # resume once when the agent stops mid-issue; 0 = off
+# export HERMES_ARGS="--provider ollama-launch -m qwen3.8:27b-mlx"  # extra `hermes chat` args (default: Hermes' config)
+
+# --- logs and the timed run log ---
+# export HERMES_LOG_DIR="$PWD/logs"      # run logs (default <repo>/logs; git-ignored by hermes-setup)
+# export HERMES_TS_MIN_GAP=2             # seconds of silence before a "(+Ns)" line in the timed log
+# export HERMES_STALL_WARN=10m           # warn after this much silence, again each interval; 0 = off
+
+# --- the CONTEXT: and BEADS: lines after each run ---
+# export HERMES_CONTEXT_WINDOW=131072    # context window for CONTEXT: (default: looked up, never guessed)
+# export HERMES_CONTEXT_TIMEOUT=30s      # time limit for the session export behind CONTEXT:
+# export HERMES_BASELINE_TIMEOUT=15s     # time limit for `hermes prompt-size` behind CONTEXT: baseline
+# export HERMES_BEADS_TIMEOUT=15s        # time limit for each `bd stats` / `bd ready` behind BEADS:
+
+# --- hermes-launch: the harness checkout check ---
+# export HERMES_FRESHNESS_CHECK=1        # 0: skip the "harness is behind origin/main" check
+# export HERMES_FRESHNESS_TIMEOUT=10s    # time limit for that check's git fetch
+
+# --- hermes-status ---
+# export HERMES_TEST_CMD="make test"     # this repo's tests, run by `hermes-status --tests` (default: none)
+# export HERMES_LOG_LINES=30             # log lines hermes-status shows
+# export HERMES_PR_LIMIT=8               # PRs hermes-status lists
+
+# --- hermes-review (the PR reviewer) ---
+# export REVIEWER_AGENT=ollama           # ollama (local model) or claude (claude -p)
+# export REVIEWER_MODEL=gemma4:31b-mlx   # reviewer model (default: Hermes' model.default)
+# export HERMES_REVIEW_PYTHON=python3.12 # Python >= 3.10 for hermes-review (default: found on PATH)

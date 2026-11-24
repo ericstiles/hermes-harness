@@ -191,6 +191,11 @@ class Beads:
         rows = json.loads(must(self._run(cmd), "bd list").out or "[]")
         return [r for r in rows if is_fix_for(str(r.get("title", "")), pr_number)]
 
+    def open_issues(self) -> list[dict[str, object]]:
+        """Every bead that is not closed (`bd list` leaves closed ones out)."""
+        out = must(self._run(["bd", "list", "--json", "--limit", "0"]), "bd list").out
+        return json.loads(out or "[]")
+
     def fixed_in(self, pr: PullRequest) -> list[str]:
         """Open beads another review-fix solved in this PR (a `Fixed in PR <url>` note line)."""
         needle = FIXED_IN_PREFIX + pr.url

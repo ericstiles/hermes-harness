@@ -38,6 +38,9 @@ class Verdict:
     # True: the PR does not rebase onto main. Not a code rejection: it never counts
     # toward the two-strike escalation (see review._act).
     rebase_conflict: bool = False
+    # Notes about other open beads that name a file this PR changes (overlap.py, bead
+    # 9cv). Shown in the review comment only: never blocking, never filed or closed.
+    related: tuple[str, ...] = ()
 
     def blocking(self) -> tuple[Problem, ...]:
         """In-scope problems: fixed on the PR's branch before it can merge."""
@@ -107,6 +110,13 @@ def review_comment(verdict: Verdict, head_sha: str) -> str:
             suffix = f": {p.detail}" if p.detail else ""
             scope = "" if p.in_scope else " _(outside this PR's scope: filed as tech debt)_"
             lines.append(f"- `{p.location()}` {p.title}{suffix}{scope}")
+    if verdict.related:
+        lines += [
+            "",
+            "Other open beads that name files this PR changes (not blocking; if this PR also "
+            "fixes one, link them as AGENTS.md, Review-fix issues, step 3 says):",
+        ]
+        lines += [f"- {note}" for note in verdict.related]
     return "\n".join(lines) + "\n"
 
 

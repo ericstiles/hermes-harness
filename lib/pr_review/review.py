@@ -6,10 +6,10 @@ import hashlib
 import logging
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from pr_review import agent, fixes, local_agent
+from pr_review import agent, fixes, local_agent, overlap
 from pr_review.checks import ReviewConfig, new_problems
 from pr_review.gate import GateOutput, RebaseConflict, checkout, fetch, run_gate
 from pr_review.meta import BeadMismatch, resolve_bead
@@ -120,6 +120,22 @@ def _ask(ctx: Context, tree: Path, bead: str, pr: PullRequest, diff: str, report
         return local_agent.ask(ctx.post, ctx.ollama_host, ctx.model or "", prompt)
 
 
+def with_related(ctx: Context, pr: PullRequest, bead: str, verdict: Verdict, diff: str) -> Verdict:
+    """Add a note for each other open bead that names a file the PR changes (bead 9cv).
+    Only verdict.related changes; a failure is logged and the verdict returned as is."""
+    try:
+        skip = {bead, *(str(r["id"]) for r in ctx.beads.review_fixes(pr.number))}
+        skip |= set(ctx.beads.fixed_in(pr))  # already linked: they close with the PR
+        notes = overlap.related_notes(overlap.changed_paths(diff), ctx.beads.open_issues(), skip)
+    except Exception as exc:  # a heuristic note must never break a review
+        log.warning("PR #%s: related-beads check failed: %s: %s", pr.number,
+                    type(exc).__name__, exc)  # fmt: skip
+        return verdict
+    if notes:
+        log.info("PR #%s: %d other open bead(s) name files it changes", pr.number, len(notes))
+    return replace(verdict, related=notes)
+
+
 def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
     base = ctx.baseline()
     tag = f"PR #{pr.number}"
@@ -146,7 +162,7 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
                 verdict = Verdict(False, "Reviewer agent skipped (--skip-agent).", ())
             else:
                 verdict = parse_verdict(_ask(ctx, tree, bead, pr, diff, report))
-            verdict = with_checks(verdict, found)
+            verdict = with_related(ctx, pr, bead, with_checks(verdict, found), diff)
             log.info(
                 "%s: reviewer verdict: %s, %d problem(s)",
                 tag, "approve" if verdict.approve else "changes needed", len(verdict.problems),

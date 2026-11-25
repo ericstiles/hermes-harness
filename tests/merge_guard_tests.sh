@@ -42,3 +42,26 @@ mg Bash "gh pr merge -s 4"; grep -q "gh pr merge <N> --rebase" "$tmp/mg.err" \
 mg Read "gh pr merge -s 4"; eq "merge guard: ignores non-Bash tools" "$?" 0
 echo 'not json' | python3 "$MG" >/dev/null 2>&1; eq "merge guard: unreadable input without a merge passes" "$?" 0
 echo 'garbage gh pr merge -s 4' | python3 "$MG" >/dev/null 2>&1; eq "merge guard: unreadable input mentioning a merge is blocked" "$?" 2
+
+# --- the hook COMMAND in .claude/settings.json finds the guard (bead lm3) ---
+# Claude Code keeps $CLAUDE_PROJECT_DIR at the directory the session started in, even after /cd into
+# this repo, so the command looks in the current repo first and falls back to $CLAUDE_PROJECT_DIR.
+# A guard found nowhere must still block (fail closed).
+HOOK_CMD=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["hooks"][0]["command"])' "$ROOT/.claude/settings.json")
+HK="$tmp/hook-cwd"; mkdir -p "$HK/elsewhere" "$HK/plain" "$HK/norepo"; git -C "$HK/norepo" init -q
+hk() { # <cwd> <CLAUDE_PROJECT_DIR> <command> -> exit code of the settings.json hook command
+  python3 -c 'import json,sys; print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}))' "$3" \
+    | (cd "$1" && CLAUDE_PROJECT_DIR="$2" sh -c "$HOOK_CMD") >/dev/null 2>"$tmp/hk.err"
+}
+hk "$ROOT" "$HK/elsewhere" "pwd"
+eq "merge guard hook: runs when CLAUDE_PROJECT_DIR is another repo (session /cd'd here)" "$?" 0
+hk "$ROOT" "$HK/elsewhere" "gh pr merge 5 --squash"
+eq "merge guard hook: still blocks a squash merge when CLAUDE_PROJECT_DIR is another repo" "$?" 2
+hk "$ROOT/tests" "$HK/elsewhere" "pwd"
+eq "merge guard hook: found from a subdirectory of the repo" "$?" 0
+hk "$HK/plain" "$ROOT" "pwd"
+eq "merge guard hook: runs from CLAUDE_PROJECT_DIR when the cwd is not a git repo" "$?" 0
+hk "$HK/plain" "$ROOT" "gh pr merge 5 --squash"
+eq "merge guard hook: blocks through the CLAUDE_PROJECT_DIR fallback too" "$?" 2
+hk "$HK/norepo" "$HK/elsewhere" "pwd"; rc=$?
+[ "$rc" -ne 0 ] && ok "merge guard hook: fails closed when the guard is missing everywhere (exit $rc)" || bad "merge guard hook: fail closed" "$rc"

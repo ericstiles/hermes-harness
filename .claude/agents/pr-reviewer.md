@@ -43,7 +43,7 @@ git -C <tree> rebase origin/main            # must be clean; on conflict: rebase
 ```
 
 Always clean up at the end, success or failure:
-`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md <dir>/nits.md <dir>/nits-bead.md && rmdir <dir>`.
+`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md <dir>/nits.md <dir>/nits-bead.md <dir>/nits-design.md <dir>/nits-accept.md && rmdir <dir>`.
 
 ## 3. Quality gate
 
@@ -159,10 +159,10 @@ in the PR comment and are lost between sessions.
    Nits never block a merge; this bead keeps them in one place so they are not lost.
 
    ## Current state
-   Each comment is one review: a `PR #N (<bead>)` line, then one `- <file:line> — <nit>` line per nit.
+   Each comment is one review: a `PR #N (<bead>)` line, then one `- <file[:line]> — <nit>` line per nit.
 
    ## Repro
-   N/A: each nit names its file and line.
+   N/A: each nit names its file, and its line when it has one.
 
    ## In scope
    The nits in the comments. Drop one, with the reason in the PR body, if it is wrong or no longer applies.
@@ -180,10 +180,37 @@ in the PR comment and are lost between sessions.
    A failing test first for each nit that is a behavior bug; wording and doc nits need none.
    ```
 
-   Then: `bd create "Review nits from pr-reviewer" -t task -p 3 -l review-nits --body-file <dir>/nits-bead.md --acceptance "[ ] every nit in the comments is fixed, or dropped with the reason in the PR body; [ ] the quality gate from AGENTS_LOCAL.md passes" --silent`.
-   It prints the new id.
-3. Write `<dir>/nits.md`: a first line `PR #N (<bead id>), <merged as <short sha> | not merged>`,
-   then one `- <file:line> — <nit>` line per nit, the same nits as in the review.
+   Write `<dir>/nits-design.md` with exactly this text:
+
+   ```
+   ## Approach
+   One commit per nit, or per file. Follow the code around each nit; no new helpers unless a nit asks for one.
+
+   ## Invariants
+   Behavior the nits do not name stays the same; existing tests still pass unchanged.
+
+   ## Edge cases
+   N/A: each nit is a single, local change.
+
+   ## Produces for downstream
+   N/A: nothing depends on these fixes.
+   ```
+
+   Write `<dir>/nits-accept.md` with exactly these three lines:
+
+   ```
+   [ ] every nit in the comments is fixed, or dropped with the reason in the PR body
+   [ ] the quality gate from AGENTS_LOCAL.md passes
+   [ ] git diff --stat shows only the files the nits name (or the PR body explains each other one)
+   ```
+
+   Then: `bd create "Review nits from pr-reviewer" -t task -p 3 -l review-nits --body-file <dir>/nits-bead.md --design-file <dir>/nits-design.md --acceptance "$(cat <dir>/nits-accept.md)" --silent`.
+   It prints the new id. Check with `bd show <id>` that the description, design and
+   all three acceptance lines landed.
+3. Write `<dir>/nits.md`. Its first line is `PR #N (<bead id>), merged as <short sha>`
+   when you merged, or `PR #N (<bead id>), not merged` when you did not. Then one
+   `- <file[:line]> — <nit>` line per nit (the line only when the nit has one), the
+   same nits as in the review.
 4. `bd comments add <collector id> -f <dir>/nits.md`.
 5. Confirm: `bd comments <collector id>` shows a comment with your `PR #N` line. If
    the create or the comment failed, report it under Output; it never undoes the
@@ -194,7 +221,7 @@ in the PR comment and are lost between sessions.
 
 - Push, force-push, commit, or edit files in the repository or the worktree
   (other than the rebase in step 2). The Write tool is only for `<dir>/review.md`,
-  `<dir>/nits.md` and `<dir>/nits-bead.md`.
+  `<dir>/nits.md`, `<dir>/nits-bead.md`, `<dir>/nits-design.md` and `<dir>/nits-accept.md`.
 - Merge when the gate failed, the rebase conflicted, `mergeable` is not
   `MERGEABLE`, or you found a blocking problem.
 - Merge more than the one PR you were given.

@@ -20,6 +20,7 @@ HH_TS_FAKE_CLOCK|test hook for lib/tsfilter.py
 HH_AGENT_LOG_TAIL|test hook for lib/stop_reason.sh
 MODEL|hermes-run internal: read from ~/.hermes/config.yaml
 PROVIDER|hermes-run internal: read from ~/.hermes/config.yaml
+HERMES_HARNESS_CLAIMS|hermes-run internal: per-iteration claims file for lib/hooks/bd_notes_guard.py
 IMAGE|hermes-run internal: read from ~/.hermes/config.yaml
 TO|hermes-launch internal: its --timeout value
 WORKED|hermes-run internal: the beads this loop worked
@@ -62,7 +63,9 @@ if [ -f "$ENVRC" ] && [ -f "$ENVRC_LOCAL" ]; then
     && bad "envrc HERMES_HARNESS_RUN only in comments" "$(grep -n HERMES_HARNESS_RUN "$ENVRC")" \
     || ok "envrc samples: .envrc mentions HERMES_HARNESS_RUN only in comments"
   # copied as is, the .envrc sample changes nothing: every setting is commented out
-  set_vars=$(cd "$tmp" && env -i PATH="$PATH" bash -c 'source_env_if_exists() { :; }; . "$1" && env' _ "$ENVRC" \
+  # --norc and stdin from /dev/null: with stdin on a socket (as under some runners) bash takes itself
+  # for a remote shell and reads ~/.bashrc, whose exports would show up here as "set" (bead anq).
+  set_vars=$(cd "$tmp" && env -i PATH="$PATH" bash --norc --noprofile -c 'source_env_if_exists() { :; }; . "$1" && env' _ "$ENVRC" </dev/null \
     | sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/\1/p' | grep -xvE 'PATH|PWD|SHLVL|_|OLDPWD' | tr '\n' ' ')
   eq "envrc samples: .envrc as shipped sets nothing (every setting commented out)" "$set_vars" ""
 

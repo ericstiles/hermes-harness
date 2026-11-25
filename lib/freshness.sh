@@ -12,28 +12,40 @@
 # value) and a missing python3 is named in the warning.
 # HERMES_FRESHNESS_CHECK=0 skips it; HERMES_FRESHNESS_TIMEOUT (default 10s) limits the fetch.
 
+# hh_harness_fetch <harness-dir> <limit>: fetch origin main without ever prompting, time-limited.
+# Returns git's exit code (124 on timeout, 127 without python3); on failure HH_FETCH_WHY says why.
+# Also used by bin/hermes-pull-check (bead anq).
+hh_harness_fetch() {
+  local h=$1 limit=$2 rc
+  HH_FETCH_WHY=""
+  if ! command -v python3 >/dev/null 2>&1; then
+    HH_FETCH_WHY="python3 not found; it runs the fetch's time limit"; return 127
+  fi
+  # Never wait on a credential or ssh host-key prompt: fail at once instead (bead ckh).
+  # GIT_SSH_COMMAND outranks core.sshCommand and GIT_SSH, so build on what the user set instead
+  # of replacing it; with only GIT_SSH (a wrapper program) set, leave ssh alone.
+  local -a fetch_env=(GIT_TERMINAL_PROMPT=0)
+  local ssh_cmd
+  if [ -n "${GIT_SSH_COMMAND:-}" ] || [ -z "${GIT_SSH:-}" ]; then
+    ssh_cmd=${GIT_SSH_COMMAND:-$(git -C "$h" config core.sshCommand 2>/dev/null)}
+    fetch_env+=("GIT_SSH_COMMAND=${ssh_cmd:-ssh} -o BatchMode=yes")
+  fi
+  env "${fetch_env[@]}" \
+    python3 "$h/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
+    git -C "$h" fetch -q origin main >/dev/null 2>&1 </dev/null; rc=$?
+  if [ "$rc" != 0 ]; then
+    HH_FETCH_WHY="git fetch exit $rc"; [ "$rc" = 124 ] && HH_FETCH_WHY="timed out after $limit"
+  fi
+  return "$rc"
+}
+
 hh_harness_freshness() {
   local h=$1 limit=${HERMES_FRESHNESS_TIMEOUT:-10s} branch behind rc
   [ "${HERMES_FRESHNESS_CHECK:-1}" = 0 ] && return 0
   [ "$(git -C "$h" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$h" && pwd -P)" ] || return 0
-  local why=""
-  if ! command -v python3 >/dev/null 2>&1; then
-    rc=127; why="python3 not found; it runs the fetch's time limit"
-  else
-    # Never wait on a credential or ssh host-key prompt: fail at once instead (bead ckh).
-    # GIT_SSH_COMMAND outranks core.sshCommand and GIT_SSH, so build on what the user set instead
-    # of replacing it; with only GIT_SSH (a wrapper program) set, leave ssh alone.
-    local -a fetch_env=(GIT_TERMINAL_PROMPT=0) ssh_cmd
-    if [ -n "${GIT_SSH_COMMAND:-}" ] || [ -z "${GIT_SSH:-}" ]; then
-      ssh_cmd=${GIT_SSH_COMMAND:-$(git -C "$h" config core.sshCommand 2>/dev/null)}
-      fetch_env+=("GIT_SSH_COMMAND=${ssh_cmd:-ssh} -o BatchMode=yes")
-    fi
-    env "${fetch_env[@]}" \
-      python3 "$h/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
-      git -C "$h" fetch -q origin main >/dev/null 2>&1 </dev/null; rc=$?
-  fi
+  hh_harness_fetch "$h" "$limit"; rc=$?
+  local why=$HH_FETCH_WHY
   if [ "$rc" != 0 ]; then
-    [ -n "$why" ] || why="git fetch exit $rc"; [ "$rc" = 124 ] && why="timed out after $limit"
     echo "warning: could not fetch origin/main for hermes-harness ($why); its checkout may be out of date" >&2
   elif behind=$(git -C "$h" rev-list --count HEAD..origin/main 2>/dev/null) && [ "${behind:-0}" -gt 0 ]; then
     echo "warning: hermes-harness is $behind commit(s) behind origin/main; run git -C '$h' pull --ff-only first" >&2

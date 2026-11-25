@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# hermes-pull-check — READ-ONLY: is `git pull --ff-only` of this hermes-harness checkout safe now?
+# A running hermes-run must not have bin/hermes-run, the files it sources, or the scripts it runs
+# changed under it (AGENTS_LOCAL.md). This fetches origin main and compares what the pull would
+# change with what hermes-run loads, for loops started from this checkout. It never pulls.
+#
+# Usage: hermes-pull-check [--no-fetch | --list]     (run from anywhere)
+#   (no option)   fetch origin main (no prompts, HERMES_FRESHNESS_TIMEOUT, default 10s), then judge
+#   --no-fetch    judge against the origin/main already fetched
+#   --list        print the files hermes-run loads ("sourced <path>" / "run <path>") and exit
+#   -h, --help    show this help and exit
+#
+# Output (parseable): PULL=<UP_TO_DATE|SAFE|WAIT|CANNOT>, evidence: lines, next: <command>.
+# Exit: 0 UP_TO_DATE or SAFE, 1 WAIT (a loop from this checkout loads a changed file),
+#       2 CANNOT (not on main, uncommitted changes, diverged, or not a git checkout).
+set -uo pipefail
+# Resolve symlinks (hermes-* are symlinked onto PATH), then locate the harness.
+_s=${BASH_SOURCE[0]}
+while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s"); case $_s in /*) ;; *) _s="$_d/$_s" ;; esac; done
+HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
+# shellcheck source=../lib/common.sh
+. "$HARNESS_HOME/lib/common.sh"
+hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
+# shellcheck source=../lib/freshness.sh
+. "$HARNESS_HOME/lib/freshness.sh"
+# shellcheck source=../lib/pull_check.sh
+. "$HARNESS_HOME/lib/pull_check.sh"
+
+case "${1:-}" in
+  "") hh_pull_check "$HARNESS_HOME" 1 ;;
+  --no-fetch) hh_pull_check "$HARNESS_HOME" 0 ;;
+  --list) hh_loaded_files "$HARNESS_HOME" ;;
+  *) echo "hermes-pull-check: unknown option $1 (see --help)" >&2; exit 2 ;;
+esac

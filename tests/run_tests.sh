@@ -49,6 +49,8 @@ eq "supervise --classify needs no repo" "$(cd "$tmp" && "$BIN/hermes-supervise" 
 . "$HERE/help_tests.sh"
 # --- Claude Code merge guard hook: only `gh pr merge <N> --rebase` (.claude/hooks/gh_merge_guard.py) ---
 . "$HERE/merge_guard_tests.sh"
+# --- hermes-supervise MODEL_API_ERROR probes the run's model endpoint (lib/model_endpoint.sh) ---
+. "$HERE/model_endpoint_tests.sh"
 
 # --- supervise: output contract, read-only, no secrets ---
 sup() { (cd "$W" && "$BIN/hermes-supervise" "$@"); }

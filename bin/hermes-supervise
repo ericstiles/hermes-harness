@@ -22,7 +22,9 @@
 # WIP_SAVED=yes|no says whether the wrap-up confirmed it saved the work.
 #   SANDBOX_DOWN     AUTO_RELAUNCH after `colima start`.
 #   BEADS_SYNC_ERROR AUTO_RELAUNCH after `bd dolt pull` (never force-push).
-#   MODEL_API_ERROR  AUTO_RELAUNCH once Ollama answers; stop after 3 in a row.
+#   MODEL_API_ERROR  AUTO_RELAUNCH once the run's model endpoint answers (provider from the run
+#                    log's header, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
+#                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
 #   QUEUE_EMPTY / OK_DONE  DONE / WAIT: nothing to do.
 #   AUTH_ERROR / BLOCKED / UNKNOWN   ASK_HUMAN with evidence.
 #   NOTES_LOST       ASK_HUMAN with the bd commands that restore the PR link.
@@ -42,6 +44,8 @@ hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 . "$HARNESS_HOME/lib/wrapup.sh"
 # shellcheck source=../lib/runtime.sh
 . "$HARNESS_HOME/lib/runtime.sh" # hh_claimed_issue: the run's bead, as hermes-run reads it
+# shellcheck source=../lib/model_endpoint.sh
+. "$HARNESS_HOME/lib/model_endpoint.sh" # hh_model_probe: is the run's model server up?
 MAX_RELAUNCH=3; TIMEOUT_CAP=120
 
 if [ "${1:-}" = "--classify" ]; then hermes_classify "${2:?logfile}"; exit 0; fi
@@ -93,8 +97,13 @@ case "$class" in
     else action=AUTO_RELAUNCH; next="bd dolt pull && hermes-launch --reason BEADS_SYNC_ERROR --issue ${issue:-unknown}"; why="beads remote is ahead; pull then relaunch (never force-push)"; fi ;;
   MODEL_API_ERROR)
     if [ "$(awk '$2=="MODEL_API_ERROR"{n++} END{print n+0}' "$STATE" 2>/dev/null)" -ge 3 ]; then why="3 model/API failures in a row"
-    else action=AUTO_RELAUNCH; next="curl -sf http://localhost:11434/api/tags >/dev/null && hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"
-         why="model server error; confirm Ollama answers, then relaunch"; fi ;;
+    else
+      provider=$(hh_run_provider "$work_log")
+      if probe=$(hh_model_probe "$provider"); then
+        action=AUTO_RELAUNCH; next="$probe && hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"
+        why="model server error; confirm the run's endpoint answers ($(hh_model_probe_url "$provider")), then relaunch"
+      else why="model server error, and the endpoint of provider '${provider:-<model.provider>}' is not in Hermes' config (model.base_url or providers.<name>.api), so it cannot be checked: start the model server, then hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"; fi
+    fi ;;
   AGENT_CRASHED)
     exc=$(tr -d '\r' < "$work_log" | grep -E '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit)(: |$)' | tail -n 1)
     if [ "$relaunches" -ge "$MAX_RELAUNCH" ]; then why="Hermes crashed (${exc:-see the traceback}) and the relaunch limit ($MAX_RELAUNCH/day) is reached for $issue"

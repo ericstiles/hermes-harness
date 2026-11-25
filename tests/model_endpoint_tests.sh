@@ -14,6 +14,8 @@ eval "val=\${$var:-}"
 if [ -n "$val" ]; then echo "$val"; else echo "Config key not set: $3"; fi
 S
 chmod +x "$ME/bin/hermes"
+# ps: no processes, so a real Hermes loop on this machine cannot turn a check into CLASS=RUNNING
+printf '#!/bin/sh\nexit 0\n' > "$ME/bin/ps"; chmod +x "$ME/bin/ps"
 . "$ROOT/lib/model_endpoint.sh"
 me() { (PATH="$ME/bin:$PATH" "$@"); }
 mtplx_cfg() { env STUB_CFG_model_provider=ollama-launch STUB_CFG_providers_mtplx_api=http://127.0.0.1:8000/v1 \

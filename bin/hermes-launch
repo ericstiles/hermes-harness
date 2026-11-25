@@ -14,6 +14,8 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+# shellcheck source=../lib/busy.sh
+. "$HARNESS_HOME/lib/busy.sh" # hh_active_procs: is a Hermes run active (test-suite runs excluded)
 # shellcheck source=../lib/freshness.sh
 . "$HARNESS_HOME/lib/freshness.sh"
 
@@ -59,7 +61,8 @@ WHAT HAPPENS
        - GH_TOKEN not set. Load it with direnv from the repo's .envrc.local.
          The token is never written to a file, printed, or put on a command line.
        - a hermes-run or "hermes chat" process already running in ANY repo
-         (one local model, so one run at a time)
+         (one local model, so one run at a time); a tests/run_tests.sh run's
+         own processes do not count
   4. Checks the hermes-harness checkout it runs from: fetches origin main (at
      most HERMES_FRESHNESS_TIMEOUT) and prints a warning, then carries on, if
      the checkout is behind origin/main (with the pull command to run), the
@@ -132,7 +135,7 @@ hh_github_repo || problems="$problems
     Fix: export GITHUB_REPO=owner/name   (or: git remote add origin <url>)"
 [ -n "${GH_TOKEN:-}" ] || problems="$problems
   - GH_TOKEN is not set (run: direnv allow, or export it)."
-if ps -axo command | grep -E "$HH_ACTIVE_PATTERN" | grep -v grep | grep -qv hermes-launch; then
+if hh_active_procs | grep -qv hermes-launch; then
   problems="$problems
   - A hermes-run / hermes chat process is already running (one run at a time)."
 fi

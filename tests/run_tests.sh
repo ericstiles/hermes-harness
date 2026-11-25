@@ -18,7 +18,11 @@ eq "tests: say | grep -q on large output never breaks the pipe under pipefail (2
 unset big fails
 . "$ROOT/lib/classify.sh"
 
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# The temp dir name is the test marker (bead 9kc): the harness's "a run is active" check skips processes
+# whose command line contains hermes-harness-test., so a gate run never blocks a real hermes-launch. The
+# harness runs through a symlink inside it, so even hermes-run's own command line carries the marker.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/hermes-harness-test.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
+tmp=${tmp%/}; tmp=${tmp//\/\//\/}; ln -s "$ROOT" "$tmp/harness"; BIN="$tmp/harness/bin"
 # Target repo (what the harness acts on) with an origin remote.
 mkdir -p "$tmp/target" "$tmp/bin"; W=$(cd "$tmp/target" && pwd -P)
 git -C "$W" init -q -b main; git -C "$W" remote add origin git@github.com:acme/widgets.git
@@ -93,7 +97,7 @@ export HERMES_FRESHNESS_CHECK=0
 out=$(cd "$W" && env -u GH_TOKEN "$BIN/hermes-launch" --dry-run 2>&1); rc=$?
 [ $rc -eq 1 ] && say "$out" | grep -q GH_TOKEN && ok "launch refuses without GH_TOKEN" || bad "launch token refusal" "$rc $out"
 out=$(cd "$W" && GH_TOKEN=x "$BIN/hermes-launch" --dry-run 2>&1)
-say "$out" | grep -q "cd '$W' &&" && say "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "launch targets the current repo with an absolute hermes-run" || bad "launch cmd" "$out"
+say "$out" | grep -q "cd '$W' &&" && say "$out" | grep -q "'$BIN/hermes-run'" && ok "launch targets the current repo with an absolute hermes-run" || bad "launch cmd" "$out"
 say "$out" | grep -q "GITHUB_REPO='acme/widgets'" && ok "launch resolves GITHUB_REPO from origin and shows it in the command" || bad "launch GITHUB_REPO shown" "$out"
 say "$out" | grep -q 'ericstiles' && bad "launch hardcodes repo" "$out" || ok "launch dry-run has no hardcoded repo"
 # GITHUB_REPO that cannot be resolved must fail the dry-run, not just the real run
@@ -134,11 +138,13 @@ say "$out" | grep -q 'WHAT HAPPENS' && ok "--help wins over other flags (nothing
 # --- symlinked install: PATH symlink resolves back to the harness ---
 mkdir -p "$tmp/linkbin"; ln -s "$BIN/hermes-launch" "$tmp/linkbin/hermes-launch"
 out=$(cd "$W" && GH_TOKEN=x PATH="$tmp/linkbin:$PATH" hermes-launch --dry-run 2>&1)
-say "$out" | grep -q "'$ROOT/bin/hermes-run'" && ok "works through a PATH symlink" || bad "symlink" "$out"
+say "$out" | grep -q "'$BIN/hermes-run'" && ok "works through a PATH symlink" || bad "symlink" "$out"
 # --- launch: warns when the harness checkout is behind origin/main (bead svz) ---
 . "$HERE/launch_staleness_tests.sh"
 # --- hermes-pull-check: is pulling the harness safe while loops run (bead anq) ---
 . "$HERE/pull_check_tests.sh"
+# --- the "run is active" check ignores test-suite processes (bead 9kc) ---
+. "$HERE/busy_check_tests.sh"
 
 # --- hermes-run with stubbed hermes/bd/docker ---
 cat > "$tmp/bin/docker" <<'S'

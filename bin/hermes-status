@@ -17,6 +17,8 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+# shellcheck source=../lib/busy.sh
+. "$HARNESS_HOME/lib/busy.sh" # hh_active_procs: is a Hermes run active (test-suite runs excluded)
 hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 hh_repo || exit 0
 cd "$REPO_ROOT" || exit 0
@@ -55,7 +57,7 @@ if have bd; then
 else echo "unavailable: bd not found"; fi
 
 hdr "active run"
-procs=$(ps -axo pid,etime,command 2>/dev/null | grep -E "$HH_ACTIVE_PATTERN" | grep -v grep | cut -c1-140)
+procs=$(hh_active_procs pid,etime,command | cut -c1-140)
 if [ -n "$procs" ]; then echo "RUNNING:"; echo "$procs"; ACTIVE=1; else echo "no hermes-run / hermes chat process"; ACTIVE=0; fi
 
 hdr "latest log"

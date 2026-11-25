@@ -37,6 +37,8 @@ while [ -h "$_s" ]; do _d=$(cd "$(dirname "$_s")" && pwd); _s=$(readlink "$_s");
 HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 # shellcheck source=../lib/common.sh
 . "$HARNESS_HOME/lib/common.sh"
+# shellcheck source=../lib/busy.sh
+. "$HARNESS_HOME/lib/busy.sh" # hh_active_procs: is a Hermes run active (test-suite runs excluded)
 hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 # shellcheck source=../lib/classify.sh
 . "$HARNESS_HOME/lib/classify.sh"
@@ -55,7 +57,7 @@ STATE="$LOG_DIR/.relaunches"          # lines: YYYYMMDD CLASS ISSUE
 log=${1:-$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -n 1)}
 [ -n "$log" ] && [ -r "$log" ] || { echo "CLASS=UNKNOWN"; echo "ACTION=ASK_HUMAN"; echo "evidence: no readable log in $LOG_DIR"; exit 0; }
 
-active=$(ps -axo command 2>/dev/null | grep -E "$HH_ACTIVE_PATTERN" | grep -v grep | wc -l | tr -d ' ')
+active=$(hh_active_procs | grep -c .)
 newest=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -n 1)
 if [ "$active" -gt 0 ] && [ "$log" = "$newest" ]; then class=RUNNING; else class=$(hermes_classify "$log"); fi
 

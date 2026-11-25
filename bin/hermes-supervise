@@ -27,6 +27,9 @@
 #                    log's RUN_PROVIDER: line, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
 #                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
 #   QUEUE_EMPTY / OK_DONE  DONE / WAIT: nothing to do.
+#   LOOP_STOP=HARNESS_CHANGED in the run log (hermes-run stopped the loop between runs because
+#                    the harness code changed): after an OK_DONE run, AUTO_RELAUNCH so the rest of
+#                    the queue runs on the new code; the LOOP_STOP line is shown either way.
 #   AUTH_ERROR / BLOCKED / UNKNOWN   ASK_HUMAN with evidence.
 #   NOTES_LOST       ASK_HUMAN with the bd commands that restore the PR link.
 # Hard limit: 3 automatic relaunches per issue per day (counted in
@@ -131,9 +134,16 @@ case "$class" in
     why="the run opened its PR but the bead lost its PR link, so hermes-review will refuse the PR. Check with bd show, then repair: ${fixes:-see the NOTES_CHECK lines}" ;;
   *)          why="unclassified; read the evidence" ;;
 esac
+# hermes-run stopped the loop between runs because its own code changed (bead eyx)
+loop_stop=$(tr -d '\r' < "$log" | sed -n 's/^LOOP_STOP=//p' | tail -n 1)
+if [ "$class" = OK_DONE ] && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
+  action=AUTO_RELAUNCH; next="hermes-launch --reason HARNESS_CHANGED"
+  why="the run finished and opened a PR, then hermes-run stopped the loop because the harness code changed (${loop_stop#HARNESS_CHANGED }); relaunch so the rest of the queue runs on the new code"
+fi
 
 echo "CLASS=$class"; echo "ISSUE=${issue:-unknown}"; echo "LOG=$log"
 echo "ACTION=$action"; [ -n "$next" ] && echo "NEXT=$next"; echo "WHY=$why"
+[ -n "$loop_stop" ] && echo "LOOP_STOP=$loop_stop"
 [ -n "$wip" ] && { echo "WIP_SAVED=$wip"; echo "WRAPUP_OF=$wrapped"; }
 # the time-limit watchdog's last decision (EXTENDED / NO_PROGRESS / CAP_REACHED / TIME_LIMIT)
 wd=$(tr -d '\r' < "$work_log" | grep '^WATCHDOG: ' | tail -n 1); [ -n "$wd" ] && echo "WATCHDOG=$wd"

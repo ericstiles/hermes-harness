@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # hermes-run — work up to N beads issues in the CURRENT repo via one-shot Hermes runs.
-# Stops when the queue is empty, an issue is blocked, or a run fails/times out.
+# Stops when the queue is empty, an issue is blocked, or a run fails/times out. Also stops,
+# between runs and never mid-run, when a harness file it loaded changed since it started (a pull,
+# branch switch or edit): it prints HARNESS_CHANGED with the files and the relaunch command,
+# adds LOOP_STOP=HARNESS_CHANGED to the last run log, and ends FINAL_RESULT=HARNESS_CHANGED.
 #
 # Usage: hermes-run [--clean] [MAX_ISSUES]     (run from the target repo, or set HERMES_REPO)
 #   MAX_ISSUES  stop after this many issues (default 10); each issue is one Hermes run, one PR
@@ -73,6 +76,8 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/stop_reason.sh"
 # shellcheck source=../lib/epics.sh
 . "$HARNESS_HOME/lib/epics.sh"
+# shellcheck source=../lib/code_stamp.sh
+. "$HARNESS_HOME/lib/code_stamp.sh" # hh_code_stamp: stop between runs when the harness code changed
 
 MAX=10; CLEAN=0
 for _a in "$@"; do
@@ -396,9 +401,35 @@ save_and_release() { # <log with the claim> [session id]
   unclaim_stale "$1"
 }
 
+# The loop's end: summary lines, then exit by the final result. A function, so a loop that stops
+# because its code changed (harness_changed) never reads the rest of this file from disk again.
+loop_epilogue() {
+  loop_end=$(date +%s)
+  _beads_line summary ${WORKED:-}
+  echo "RUN_TIME total=$(hh_elapsed $((loop_end - loop_start))) start=$(hh_hms "$loop_start") end=$(hh_hms "$loop_end") runs=$runs"
+  echo "FINAL_RESULT=$final"
+  case "$final" in OK_DONE|QUEUE_EMPTY) exit 0 ;; *) exit 1 ;; esac
+}
+
+# Bead eyx: the harness files this loop runs, as they were when it started. A pull, branch switch
+# or edit of any of them while the loop runs stops it before its next run (never mid-run): bash
+# would otherwise run a mix of old (in memory) and new (re-read from disk) code.
+CODE_STAMP=$(hh_code_stamp "$HARNESS_HOME")
+harness_changed() { # <changed paths> <next run number>: say why, mark the last run log, stop
+  echo "HARNESS_CHANGED: the harness code changed since this loop started ($1)." \
+    "Stopping before run $2 so the next loop runs the new code; the finished runs are not affected." \
+    "Relaunch from $REPO_ROOT: hermes-launch --reason HARNESS_CHANGED --max $((MAX - $2 + 1))"
+  [ -n "${log:-}" ] && echo "LOOP_STOP=HARNESS_CHANGED files=$1" >> "$log"
+  final=HARNESS_CHANGED
+  loop_epilogue
+}
+
 final=OK_DONE; WORKED=""  # beads claimed by this loop's main runs (BEADS: summary)
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
+  if [ "$i" -gt 1 ] && changed=$(hh_code_changes "$HARNESS_HOME" "$CODE_STAMP"); then
+    harness_changed "$changed" "$i"
+  fi
   stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
   run_once "$TIMEOUT"; claim_log=$log
   worked=$(claimed_issue "$claim_log"); echo "BEADS: worked ${worked:-none}"
@@ -464,8 +495,4 @@ for i in $(seq 1 "$MAX"); do
     *) echo "Run ended as $class — stopping. See $log"; break ;;
   esac
 done
-loop_end=$(date +%s)
-_beads_line summary ${WORKED:-}
-echo "RUN_TIME total=$(hh_elapsed $((loop_end - loop_start))) start=$(hh_hms "$loop_start") end=$(hh_hms "$loop_end") runs=$runs"
-echo "FINAL_RESULT=$final"
-case "$final" in OK_DONE|QUEUE_EMPTY) exit 0 ;; *) exit 1 ;; esac
+loop_epilogue

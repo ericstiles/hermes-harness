@@ -62,7 +62,7 @@ say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T m
   && ok "notes check: a review-fix run that wiped the ticket's notes is NOTES_LOST (the eac incident)" || bad "notes check: eac" "$(grep NOTES_CHECK "$runlog") $(echo "$out" | tail -2)"
 
 # 5. gh cannot read the PR -> fall back to the claimed bead
-bead "$T" in_progress "PR: $URL"
+rm -f "$STUB_BEADS/$F.json"; bead "$T" in_progress "PR: $URL"
 nc_run
 say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd show $T --json" "$STUB_LOG" \
   && ok "notes check: without the PR body it checks the claimed bead" || bad "notes check: fallback" "$(cat "$STUB_LOG")"
@@ -89,4 +89,53 @@ out=$(HERMES_LOG_DIR="$W/logs" runit "$BIN/hermes-supervise" "$runlog")
 say "$out" | grep -q '^CLASS=NOTES_LOST$' && say "$out" | grep -q '^ACTION=ASK_HUMAN$' \
   && say "$out" | grep -q "^WHY=.*bd update $T --append-notes \"PR: $URL\"" \
   && ok "notes check: supervise asks the human and shows the repair command" || bad "notes check: supervise" "$out"
+# 8. the harness writes a missing PR line itself (incident 2026-11-24, organize_music-225), but only
+# when the PR's head branch is bd/<T>; status problems are never repaired
+rm -rf "$STUB_BEADS"; bead "$T" in_progress "PR: $URL"; bead "$F" in_progress "Working."
+nc_run STUB_FIXTURE="$FX/review_fix_done.log" STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd update $F --append-notes PR: $URL$" "$STUB_LOG" \
+  && grep -q '^bd dolt push' "$STUB_LOG" && say "$out" | grep -qxF "NOTES_FIX: appended PR: $URL to $F (the agent had not written it)" \
+  && ok "notes check: appends the review-fix bead's missing PR line, pushes, stays OK_DONE" \
+  || bad "notes check: repair F" "$(grep -E 'NOTES|^bd' "$runlog" "$STUB_LOG") $(echo "$out" | tail -3)"
+grep -q "^bd update $T " "$STUB_LOG" && bad "notes check: touched the intact ticket" "$(grep '^bd update' "$STUB_LOG")" \
+  || ok "notes check: leaves a bead that already has the PR line alone"
+rm -f "$STUB_BEADS/$F.json"; bead "$T" in_progress "Claimed."
+nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && grep -q "^bd update $T --append-notes PR: $URL$" "$STUB_LOG" \
+  && ok "notes check: appends the ticket's missing PR line" || bad "notes check: repair T" "$(cat "$STUB_LOG") $(echo "$out" | tail -3)"
+bead "$T" in_progress "Claimed."
+nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/other-bead"
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && ! grep -q '^bd update' "$STUB_LOG" \
+  && say "$out" | grep -q "^warning: no PR-line repair: $URL head is 'bd/other-bead', not bd/$T$" \
+  && ok "notes check: no repair when the PR's head branch is not bd/<ticket>" || bad "notes check: head mismatch" "$(cat "$STUB_LOG") $(echo "$out" | tail -3)"
+bead "$T" closed "Claimed."
+nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && ! grep -q '^bd update' "$STUB_LOG" \
+  && ok "notes check: never repairs a ticket that is not in_progress" || bad "notes check: closed no repair" "$(cat "$STUB_LOG")"
+bead "$T" in_progress "Claimed."
+nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T" STUB_BD_UPDATE_FAIL=1
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T missing $URL in notes" "$runlog" \
+  && ok "notes check: a failed repair write stays NOTES_LOST" || bad "notes check: repair fails" "$(echo "$out" | tail -3)"
+
+# 9. a bead that got the PR URL during the run but is not T, F or a proper side bead B is a stray
+S=learn_hermes-b8p.25; B=learn_hermes-side
+bead "$T" in_progress "PR: $URL"; bead "$F" in_progress "PR: $URL"
+bead "$S" open "Fixed in PR $URL (commit 5578009). PR: $URL"
+nc_run STUB_FIXTURE="$FX/review_fix_done.log" STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' \
+  && grep -qxF "NOTES_CHECK: $S has $URL in notes but is not the PR's bead ($T or $F)" "$runlog" \
+  && grep -q -- "--notes-contains $URL --updated-after 20[0-9-]*T[0-9:]*Z --json --limit 0" "$STUB_LOG" \
+  && ok "notes check: a bead wrongly carrying the PR URL is NOTES_LOST, named in the log" \
+  || bad "notes check: stray" "$(grep -E 'NOTES|^bd list' "$runlog" "$STUB_LOG") $(echo "$out" | tail -3)"
+grep -q "^bd update $S" "$STUB_LOG" && bad "notes check: edited the stray" "$(grep '^bd update' "$STUB_LOG")" \
+  || ok "notes check: never edits a stray bead"
+rm -f "$STUB_BEADS/$S.json"; bead "$B" in_progress "Fixed in PR $URL via review-fix $F"
+nc_run STUB_FIXTURE="$FX/review_fix_done.log" STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && ok "notes check: a side bead with the exact review-fix line is not a stray" \
+  || bad "notes check: side bead" "$(grep NOTES "$runlog") $(echo "$out" | tail -3)"
+rm -f "$STUB_BEADS/$F.json" "$STUB_BEADS/$B.json"
+bead "$S" open "PR: $URL"; nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+out=$(HERMES_LOG_DIR="$W/logs" runit "$BIN/hermes-supervise" "$runlog")
+say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q "^WHY=.*remove the PR line from $S" \
+  && ok "notes check: supervise tells the human to remove the stray PR line" || bad "notes check: supervise stray" "$out"
 rm -rf "$W/logs" "$STUB_BEADS"; unset STUB_BEADS

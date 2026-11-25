@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Hermes pre_tool_call hook: block `bd update ... --notes` in terminal commands.
+"""Hermes pre_tool_call hook: guard `bd update` notes writes in terminal commands.
 
-`--notes` replaces a bead's whole notes field and takes a literal string (it does not read
-@file). On 2026-11-19 Hermes ran `bd update <id> --notes @/tmp/f`, which wiped the PR link
-hermes-review needs, and the queue stalled. Agents must use `--append-notes` instead.
+1. Block `bd update ... --notes`: it replaces a bead's whole notes field and takes a literal
+   string (it does not read @file). On 2026-11-19 Hermes ran `bd update <id> --notes @/tmp/f`,
+   which wiped the PR link hermes-review needs, and the queue stalled.
+2. Block `bd update <id> --append-notes` on a bead this run has not claimed. On 2026-11-24
+   Hermes appended the PR link to organize_music-b8p.25 instead of organize_music-225. Claims
+   (`bd update <id> --claim`) are recorded in the file named by HERMES_HARNESS_CLAIMS, which
+   bin/hermes-run exports and empties per loop iteration; a claim earlier in the same command
+   counts. Without HERMES_HARNESS_CLAIMS this check is off.
 
 Wire protocol (~/.hermes/hermes-agent/agent/shell_hooks.py): Hermes pipes
 {"tool_name": ..., "tool_input": {"command": ...}, ...} on stdin; printing
@@ -26,13 +31,28 @@ REASON = (
     "Blocked: `bd update --notes` replaces the whole notes field and does not read @file. "
     'Use `bd update <id> --append-notes "<line>"`, then `bd show <id>` to verify.'
 )
+UNCLAIMED = (
+    "Blocked: `bd update {ids} --append-notes`: this run has not claimed {ids} "
+    "(claimed: {claimed}). Copy the full bead id from the claim or `gh pr view`, never retype "
+    "it. A side bead must be claimed first (`bd update <id> --claim`)."
+)
+NO_ID = "Blocked: `bd update --append-notes` without a bead id. Name the full id you claimed."
 GATE_VAR = "HERMES_HARNESS_RUN"  # set to 1 by bin/hermes-run; otherwise the hook allows all
+CLAIMS_VAR = "HERMES_HARNESS_CLAIMS"  # file of ids claimed this run, one per line
 _OPERATORS = {";", "&&", "||", "|", "&", "\n"}
 _NOTES = re.compile(r"--notes(=|$)")
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _PREFIXES = {"command", "env", "exec", "sudo", "nohup", "time"}
 # Fallback when the command cannot be tokenized (unbalanced quotes).
 _FALLBACK = re.compile(r"\bbd\s[^;&|\n]*\bupdate\b[^;&|\n]*(?<![\w-])--notes(?=[\s=]|$)")
+# bd update flags that take a value; the value is never a bead id.
+_VALUE_FLAGS = {
+    "--append-notes", "--notes", "--status", "-s", "--assignee", "-a", "--title",
+    "--description", "-d", "--design", "--acceptance", "--priority", "-p", "--type", "-t",
+    "--add-label", "--remove-label", "--set-labels", "-l", "--parent", "--if-assignee",
+    "--if-status", "--estimate", "-e", "--external-ref", "--due", "--defer", "--body-file",
+    "--description-file", "--metadata", "--spec-id", "--actor", "--db",
+}  # fmt: skip
 
 
 def _tokens(command: str) -> list[str]:
@@ -60,35 +80,96 @@ def _program(seg: list[str]) -> int:
     return i
 
 
-def _segment_blocked(seg: list[str]) -> bool:
-    start = _program(seg)
-    is_bd = os.path.basename(seg[start]) == "bd"
-    seg = seg[start:]
+class Guard:
+    """Walks a command's `bd update` calls in order; `reason` is set when one must be blocked."""
+
+    def __init__(self, claimed: set[str] | None) -> None:
+        self.claimed = claimed  # None: the claim check is off
+        self.new_claims: list[str] = []
+        self.reason: str | None = None
+
+    def command(self, command: str) -> None:
+        try:
+            tokens = _tokens(command)
+        except ValueError:
+            if _FALLBACK.search(command):
+                self.reason = REASON
+            return
+        for seg in _segments(tokens):
+            if self.reason is None:
+                self._segment(seg)
+
+    def _segment(self, seg: list[str]) -> None:
+        start = _program(seg)
+        is_bd = os.path.basename(seg[start]) == "bd"
+        args = seg[start + 1 :]
+        if not is_bd:  # bash -c '...': guard the inner command too (never a bd flag's value)
+            for tok in args:
+                if any(c.isspace() for c in tok) and self.reason is None:
+                    self.command(tok)
+            return
+        if "update" not in args:
+            return
+        ids, flags = _parse_update(args[args.index("update") + 1 :])
+        if "--notes" in flags:
+            self.reason = REASON
+            return
+        if "--claim" in flags:
+            self.new_claims.extend(ids)
+        if "--append-notes" in flags and self.claimed is not None:
+            self._check_append(ids)
+
+    def _check_append(self, ids: list[str]) -> None:
+        if not ids:
+            self.reason = NO_ID
+            return
+        known = self.claimed | set(self.new_claims)
+        missing = [i for i in ids if i not in known]
+        if missing:
+            self.reason = UNCLAIMED.format(
+                ids=" ".join(missing), claimed=", ".join(sorted(known)) or "none"
+            )
+
+
+def _parse_update(args: list[str]) -> tuple[list[str], set[str]]:
+    """The bead ids and the flag names of `bd update <args>`."""
+    ids: list[str] = []
+    flags: set[str] = set()
     skip_next = False
-    has_update = False
-    has_notes = False
-    for tok in seg[1:]:
-        if skip_next:  # the value of --append-notes, whatever it says
+    for tok in args:
+        if skip_next:  # a flag's value, whatever it says (e.g. "--notes" as appended text)
             skip_next = False
             continue
-        if tok == "--append-notes":
-            skip_next = True
-        elif tok == "update":
-            has_update = True
-        elif _NOTES.match(tok):
-            has_notes = True
-        elif any(c.isspace() for c in tok) and blocked(tok):  # bash -c '...'
-            return True
-    return is_bd and has_update and has_notes
+        if tok.startswith("-"):
+            name = tok.split("=", 1)[0]
+            flags.add("--notes" if _NOTES.match(tok) else name)
+            skip_next = "=" not in tok and name in _VALUE_FLAGS
+        else:
+            ids.append(tok)
+    return ids, flags
 
 
 def blocked(command: str) -> bool:
     """True when the shell command runs `bd update` with `--notes` / `--notes=`."""
+    guard = Guard(None)
+    guard.command(command)
+    return guard.reason is not None
+
+
+def _read_claims(path: str) -> set[str]:
     try:
-        tokens = _tokens(command)
-    except ValueError:
-        return _FALLBACK.search(command) is not None
-    return any(_segment_blocked(seg) for seg in _segments(tokens))
+        with open(path, encoding="utf-8") as fh:
+            return {line.strip() for line in fh if line.strip()}
+    except OSError:
+        return set()
+
+
+def _record_claims(path: str, ids: list[str]) -> None:
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.writelines(i + "\n" for i in ids)
+    except OSError as exc:
+        print(f"bd_notes_guard: cannot record claims in {path}: {exc}", file=sys.stderr)
 
 
 USAGE = """Usage: bd_notes_guard.py < HOOK_PAYLOAD_JSON
@@ -112,8 +193,15 @@ def main(argv: list[str] | None = None) -> int:
         if payload.get("tool_name") != "terminal":
             return 0
         command = (payload.get("tool_input") or {}).get("command")
-        if isinstance(command, str) and blocked(command):
-            print(json.dumps({"decision": "block", "reason": REASON}))
+        if not isinstance(command, str):
+            return 0
+        claims_path = os.environ.get(CLAIMS_VAR) or ""
+        guard = Guard(_read_claims(claims_path) if claims_path else None)
+        guard.command(command)
+        if guard.reason is not None:
+            print(json.dumps({"decision": "block", "reason": guard.reason}))
+        elif claims_path and guard.new_claims:
+            _record_claims(claims_path, guard.new_claims)
     except Exception as exc:  # fail open: a broken hook must never stop the agent
         print(f"bd_notes_guard: ignoring malformed payload: {exc}", file=sys.stderr)
     return 0

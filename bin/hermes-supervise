@@ -108,9 +108,10 @@ case "$class" in
   AGENT_STOPPED)
     sid=$(tr -d '\r' < "$log" | sed -n 's/^Session: *\([0-9A-Za-z_]*\)$/\1/p' | tail -n 1)
     why="agent ended its turn mid-issue with no PR and no RUN_BLOCKED (often: it asked a question nobody answers); hermes-run resumes once by default. Read the end of the log, then resume: hermes --resume ${sid:-<session id>} -q \"Continue the issue to its PR\" or release it: bd unclaim ${issue:-<id>}" ;;
-  NOTES_LOST) # written by hermes-run from lib/notes_check.sh; never auto-repaired
+  NOTES_LOST) # written by hermes-run from lib/notes_check.sh, after its own PR-line repair failed
     fixes=$(tr -d '\r' < "$log" | sed -n \
       -e 's/^NOTES_CHECK: \([^ ]*\) missing \([^ ]*\) in notes$/bd update \1 --append-notes "PR: \2"/p' \
+      -e 's/^NOTES_CHECK: \([^ ]*\) has \([^ ]*\) in notes but is not .*/remove the PR line from \1 by hand (bd show \1: it is not this PR'"'"'s bead)/p' \
       -e 's/^NOTES_CHECK: \([^ ]*\) status [^ ]*, expected in_progress$/bd update \1 --status in_progress/p' \
       | sort -u | paste -sd ';' - | sed 's/;/; /g')
     why="the run opened its PR but the bead lost its PR link, so hermes-review will refuse the PR. Check with bd show, then repair: ${fixes:-see the NOTES_CHECK lines}" ;;

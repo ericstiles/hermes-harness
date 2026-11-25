@@ -20,6 +20,7 @@ HH_TS_FAKE_CLOCK|test hook for lib/tsfilter.py
 HH_AGENT_LOG_TAIL|test hook for lib/stop_reason.sh
 MODEL|hermes-run internal: read from ~/.hermes/config.yaml
 PROVIDER|hermes-run internal: read from ~/.hermes/config.yaml
+HERMES_HARNESS_CLAIMS|hermes-run internal: per-iteration claims file for lib/hooks/bd_notes_guard.py
 IMAGE|hermes-run internal: read from ~/.hermes/config.yaml
 TO|hermes-launch internal: its --timeout value
 WORKED|hermes-run internal: the beads this loop worked

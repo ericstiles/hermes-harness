@@ -138,4 +138,13 @@ bead "$S" open "PR: $URL"; nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
 out=$(HERMES_LOG_DIR="$W/logs" runit "$BIN/hermes-supervise" "$runlog")
 say "$out" | grep -q '^ACTION=ASK_HUMAN$' && say "$out" | grep -q "^WHY=.*remove the PR line from $S" \
   && ok "notes check: supervise tells the human to remove the stray PR line" || bad "notes check: supervise stray" "$out"
+# 10. URLs match with a number boundary: .../pull/12 is not .../pull/120 (hermes-harness-hzg)
+rm -rf "$STUB_BEADS"; bead "$T" in_progress "PR: $URL"; bead "$S" open "PR: ${URL}0"
+nc_run STUB_PR_BODY="Bead: $T" STUB_PR_HEAD="bd/$T"
+say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && ! grep -q "NOTES_CHECK: $S" "$runlog" \
+  && ok "notes check: a bead carrying pull/120 is not a stray of pull/12" || bad "notes check: url boundary stray" "$(grep NOTES "$runlog")"
+rm -f "$STUB_BEADS/$S.json"; bead "$T" in_progress "PR: ${URL}0"
+nc_run STUB_PR_BODY="Bead: $T"
+say "$out" | grep -q '^FINAL_RESULT=NOTES_LOST$' && grep -qxF "NOTES_CHECK: $T missing $URL in notes" "$runlog" \
+  && ok "notes check: pull/120 in the ticket's notes does not count as pull/12" || bad "notes check: url boundary state" "$(grep NOTES "$runlog")"
 rm -rf "$W/logs" "$STUB_BEADS"; unset STUB_BEADS

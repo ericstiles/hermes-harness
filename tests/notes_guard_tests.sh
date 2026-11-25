@@ -95,4 +95,21 @@ out=$(ngc 'bd update om-225 --append-notes "ran bd update om-9 --notes x earlier
 [ -z "$out" ] && ok "claim guard: an appended note that mentions --notes is not a command" || bad "claim guard: note text" "$out"
 out=$(ngc 'bd update om-225 --notes x')
 say "$out" | grep -q 'replaces the whole notes field' && ok "claim guard: --notes is still blocked on a claimed bead" || bad "claim guard: --notes" "$out"
+# bd update flags that take a value: the value is never a bead id (hermes-harness-hzg)
+for flags in '--design-file d.md' '--session s1' '--await-id 123' '--set-metadata k=v' \
+  '--unset-metadata k' '--database db1' '-C /w' '--directory /w' '--dolt-auto-commit off' \
+  '--mem-profile m.out'; do
+  out=$(ngc "bd update om-225 $flags --append-notes x")
+  [ -z "$out" ] && ok "claim guard: the value of $flags is not a bead id" || bad "claim guard: $flags" "$out"
+done
+out=$(ngc 'bd update om-225 --design-file=d.md --append-notes x')
+[ -z "$out" ] && ok "claim guard: --flag=value form" || bad "claim guard: =value" "$out"
+# The guard's value flags are exactly what `bd update --help` lists as taking one, when bd is real
+if bd update --help >/dev/null 2>&1 && bd update --help 2>&1 | grep -q -- '--append-notes string'; then
+  missing=$(bd update --help 2>&1 | sed -nE 's/^ +(-[a-zA-Z], )?(--[a-z-]+) (string|strings|stringArray|int) .*/\1\2/p' \
+    | tr -d ',' | tr ' ' '\n' | grep . | while read -r f; do
+      python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import bd_notes_guard as g
+sys.exit(0 if sys.argv[2] in g._VALUE_FLAGS else 1)' "$ROOT/lib/hooks" "$f" || echo "$f"; done)
+  [ -z "$missing" ] && ok "claim guard: every value flag of bd update --help is known" || bad "claim guard: value flags" "$missing"
+fi
 grep -q 'never retype' "$ROOT/AGENTS.md" && ok "AGENTS.md: copy bead ids, never retype them" || bad "AGENTS.md: id rule" "missing"

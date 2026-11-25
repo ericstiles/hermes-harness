@@ -23,6 +23,8 @@ HARNESS_HOME=$(cd "$(dirname "$_s")/.." && pwd)
 hh_help_requested "$@" && { hh_print_help "${BASH_SOURCE[0]}"; exit 0; }
 # shellcheck source=../lib/freshness.sh
 . "$HARNESS_HOME/lib/freshness.sh"
+# shellcheck source=../lib/code_stamp.sh
+. "$HARNESS_HOME/lib/code_stamp.sh" # hh_loaded_files
 # shellcheck source=../lib/pull_check.sh
 . "$HARNESS_HOME/lib/pull_check.sh"
 

@@ -19,27 +19,8 @@ hh_resolve() { # <path> -> its physical path, symlinks resolved; fails when it d
   printf '%s/%s\n' "$(cd "$(dirname "$s")" && pwd -P)" "$(basename "$s")"
 }
 
-hh_loaded_files() { # <harness> -> "sourced <path>" and "run <path>" lines, paths relative to it
-  local h=$1 queue="bin/hermes-run" seen=" " f rel
-  # Everything hermes-run sources, followed through the files it sources in turn.
-  while [ -n "$queue" ]; do
-    f=${queue%% *}; queue=${queue#"$f"}; queue=${queue# }
-    case $seen in *" $f "*) continue ;; esac
-    seen="$seen$f "
-    echo "sourced $f"
-    [ -r "$h/$f" ] || continue
-    for rel in $(sed -nE 's#^[[:space:]]*(\.|source)[[:space:]]+"?\$\{?HARNESS_HOME\}?/([^" ]+)"?.*#\2#p' "$h/$f"); do
-      queue="${queue:+$queue }$rel"
-    done
-  done
-  # What they run mid-loop: lib/*.py named through $HARNESS_HOME, and the hooks Hermes calls.
-  {
-    for f in $seen; do
-      grep -oE '\$\{?HARNESS_HOME\}?/lib/[A-Za-z0-9_./-]+\.py' "$h/$f" 2>/dev/null | sed -E 's#^\$\{?HARNESS_HOME\}?/##'
-    done
-    for f in "$h"/lib/hooks/*; do [ -f "$f" ] && echo "lib/hooks/${f##*/}"; done
-  } | sort -u | sed 's/^/run /'
-}
+# hh_loaded_files (the files a running hermes-run has loaded) is in lib/code_stamp.sh, which
+# hermes-pull-check sources first; hermes-run uses it too, to notice its own code changing (bead eyx).
 
 hh_loop_pids() { # <harness> -> pids of hermes-run processes started from this checkout, space-separated
   local want pid cmd w path pids=""

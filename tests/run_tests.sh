@@ -250,6 +250,8 @@ if [ "$1" = sessions ]; then
   exit 0
 fi
 echo "env HERMES_HARNESS_RUN=${HERMES_HARNESS_RUN:-}" >> "$STUB_LOG"
+# STUB_TOUCH=<file>: edit that file mid-run (a pull or edit while a loop runs, bead eyx)
+[ -n "${STUB_TOUCH:-}" ] && echo "# changed mid-run" >> "$STUB_TOUCH"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_COUNT"
 f=$STUB_FIXTURE; [ "$n" -ge 2 ] && [ -n "$STUB_FIXTURE_2" ] && f=$STUB_FIXTURE_2
 [ -n "$f" ] && { cat "$f"; exit "${STUB_EXIT:-0}"; }
@@ -326,6 +328,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/bead_stats_tests.sh"
   # every run log records its effective provider (RUN_PROVIDER:) for hermes-supervise (b80)
   . "$HERE/model_endpoint_run_tests.sh"
+  # the harness code changed while the loop ran: stop before the next run and say why (bead eyx)
+  . "$HERE/harness_changed_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

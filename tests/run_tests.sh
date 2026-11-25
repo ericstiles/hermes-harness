@@ -162,6 +162,18 @@ if [ "$1" = show ]; then
   [ "${STUB_BD_SHOW_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
   [ -n "$STUB_BEADS" ] && [ -f "$STUB_BEADS/$2.json" ] && cat "$STUB_BEADS/$2.json"
 fi
+# update <id> --append-notes <text>: appends to $STUB_BEADS/<id>.json; STUB_BD_UPDATE_FAIL=1 fails
+if [ "$1" = update ] && [ "$3" = --append-notes ] && [ -n "$STUB_BEADS" ]; then
+  [ "${STUB_BD_UPDATE_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
+  python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); n=d[0].get("notes") or ""
+d[0]["notes"]=(n+"\n" if n else "")+sys.argv[2]; json.dump(d,open(p,"w"))' "$STUB_BEADS/$2.json" "$4"
+fi
+# list ... --notes-contains <text> ... --json: every $STUB_BEADS bead whose notes contain <text>
+if [ "$1" = list ] && [ -n "$STUB_BEADS" ] && printf '%s\n' "$@" | grep -qx -- --notes-contains; then
+  python3 -c 'import glob,json,os,sys; a=sys.argv[2:]; t=a[a.index("--notes-contains")+1]
+print(json.dumps([d for f in sorted(glob.glob(os.path.join(sys.argv[1],"*.json")))
+  for d in json.load(open(f)) if t in str(d.get("notes") or "")]))' "$STUB_BEADS" "$@"
+fi
 # epic close-eligible: STUB_EPICS="a b|c|" plays back one round per call ("a b", then "c",
 # then nothing); STUB_EPICS_FAIL=1 fails. The round counter lives in $STUB_EPIC_COUNT.
 if [ "$1 $2" = "epic close-eligible" ]; then
@@ -190,6 +202,9 @@ cat > "$tmp/bin/gh" <<'S'
 # (unset = fails); everything else fails
 echo "gh $*" >> "$STUB_LOG"
 [ "$1 $2" = "pr list" ] && { [ -n "$STUB_PR_URL" ] && echo "$STUB_PR_URL"; exit 0; }
+# pr view --json headRefName prints $STUB_PR_HEAD (unset = fails)
+[ "$1 $2" = "pr view" ] && case "$*" in *headRefName*) true ;; *) false ;; esac \
+  && { [ -n "${STUB_PR_HEAD+x}" ] && { printf '%s\n' "$STUB_PR_HEAD"; exit 0; }; exit 1; }
 [ "$1 $2" = "pr view" ] && [ -n "${STUB_PR_BODY+x}" ] && { printf '%s\n' "$STUB_PR_BODY"; exit 0; }
 exit 1
 S

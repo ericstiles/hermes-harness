@@ -116,6 +116,11 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
+# Beads this loop iteration claimed (`bd update <id> --claim`), recorded by
+# lib/hooks/bd_notes_guard.py, which blocks --append-notes on any other bead (incident
+# 2026-11-24: the PR link went to organize_music-b8p.25 instead of organize_music-225).
+# Emptied at the start of each iteration; resumed and wrap-up sessions share it.
+export HERMES_HARNESS_CLAIMS="$LOCK/claims"
 
 docker info >/dev/null 2>&1 || { echo "Docker daemon not running (try: colima start)" >&2; echo "RUN_RESULT=SANDBOX_DOWN"; exit 2; }
 
@@ -263,12 +268,13 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
 }
 
 # An OK_DONE run whose bead lost its PR link (in_progress + URL in notes) is NOTES_LOST:
-# hermes-review would refuse the PR and the queue would stall unnoticed. Read-only.
+# hermes-review would refuse the PR and the queue would stall unnoticed. hh_notes_check appends a
+# missing `PR:` line itself and flags other beads that picked the URL up since $iter_start.
 notes_check() {
   local claimed out rc
   claimed=$(claimed_issue "$log")
   [ -n "$claimed" ] || [ -z "$stopped_log" ] || claimed=$(claimed_issue "$stopped_log")
-  out=$(hh_notes_check "$log" "$claimed"); rc=$?
+  out=$(hh_notes_check "$log" "$claimed" "$iter_start"); rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
   [ "$rc" = 1 ] || return 0
   class=NOTES_LOST
@@ -390,7 +396,7 @@ save_and_release() { # <log with the claim> [session id]
 final=OK_DONE; WORKED=""  # beads claimed by this loop's main runs (BEADS: summary)
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
-  stopped_log=""; sid=""
+  stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
   run_once "$TIMEOUT"; claim_log=$log
   worked=$(claimed_issue "$claim_log"); echo "BEADS: worked ${worked:-none}"
   [ -n "$worked" ] && WORKED="${WORKED:+$WORKED }$worked"

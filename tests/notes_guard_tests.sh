@@ -61,3 +61,38 @@ out=$(printf 'not json' | HERMES_HARNESS_RUN=1 "$NG" 2>&1 >/dev/null); rc=$?
   || bad "notes guard: malformed payload" "rc=$rc $out"
 out=$(printf '{"tool_name":"terminal","tool_input":null}' | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null); rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && ok "notes guard: missing tool_input is allowed" || bad "notes guard: no tool_input" "rc=$rc $out"
+
+# Claim check (incident 2026-11-24: the PR link went to organize_music-b8p.25 instead of
+# organize_music-225): with HERMES_HARNESS_CLAIMS set, --append-notes only on beads claimed this run.
+CL="$tmp/claims"
+ngc() { # <command> -> hook output with the claims file
+  ng_payload terminal "$1" | HERMES_HARNESS_RUN=1 HERMES_HARNESS_CLAIMS="$CL" "$NG" 2>/dev/null
+}
+: > "$CL"
+out=$(ngc 'bd update om-225 --append-notes "PR: https://x/pull/1"')
+say "$out" | grep -q '"decision": "block"' && say "$out" | grep -q 'has not claimed om-225' \
+  && ok "claim guard: blocks append-notes before any claim" || bad "claim guard: no claims" "$out"
+out=$(ngc 'cd /w && bd update om-225 --claim --json')
+[ -z "$out" ] && grep -qx 'om-225' "$CL" && ok "claim guard: records a claim" || bad "claim guard: record" "$out | $(cat "$CL")"
+out=$(ngc 'bd update om-225 --append-notes "PR: https://x/pull/1"')
+[ -z "$out" ] && ok "claim guard: allows append-notes on the claimed bead" || bad "claim guard: claimed" "$out"
+out=$(ngc 'bd update om-b8p.25 --append-notes "PR: https://x/pull/1"')
+say "$out" | grep -q '"decision": "block"' && say "$out" | grep -q 'om-b8p.25' && say "$out" | grep -q 'claimed: om-225' \
+  && ok "claim guard: blocks append-notes on a look-alike bead (b8p.25 vs 225)" || bad "claim guard: look-alike" "$out"
+out=$(ngc 'bd update 225 --append-notes x')
+say "$out" | grep -q '"decision": "block"' && ok "claim guard: a shortened id does not match the claim" || bad "claim guard: short id" "$out"
+out=$(ngc 'bd update om-side --claim && bd update om-side --append-notes "Fixed in PR u via review-fix om-225"')
+[ -z "$out" ] && grep -qx 'om-side' "$CL" && ok "claim guard: a claim earlier in the same command counts" || bad "claim guard: same command" "$out"
+out=$(ngc 'bd update om-225 --status blocked --append-notes "needs B"')
+[ -z "$out" ] && ok "claim guard: flags before append-notes are parsed (status value is not an id)" || bad "claim guard: flags" "$out"
+out=$(ngc 'bd update --append-notes x')
+say "$out" | grep -q 'without a bead id' && ok "claim guard: blocks append-notes with no id" || bad "claim guard: no id" "$out"
+out=$(ngc "bash -c 'bd update om-zzz --append-notes x'")
+say "$out" | grep -q '"decision": "block"' && ok "claim guard: checks inside bash -c" || bad "claim guard: bash -c" "$out"
+out2=$(ng_payload terminal 'bd update om-zzz --append-notes x' | HERMES_HARNESS_RUN=1 "$NG" 2>/dev/null)
+[ -z "$out2" ] && ok "claim guard: off without HERMES_HARNESS_CLAIMS" || bad "claim guard: unset" "$out2"
+out=$(ngc 'bd update om-225 --append-notes "ran bd update om-9 --notes x earlier"')
+[ -z "$out" ] && ok "claim guard: an appended note that mentions --notes is not a command" || bad "claim guard: note text" "$out"
+out=$(ngc 'bd update om-225 --notes x')
+say "$out" | grep -q 'replaces the whole notes field' && ok "claim guard: --notes is still blocked on a claimed bead" || bad "claim guard: --notes" "$out"
+grep -q 'never retype' "$ROOT/AGENTS.md" && ok "AGENTS.md: copy bead ids, never retype them" || bad "AGENTS.md: id rule" "missing"

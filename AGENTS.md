@@ -93,6 +93,12 @@ only. Interactive sessions keep the Conservative profile.
   no `@file` to a bd flag unless `bd <cmd> --help` says it reads files.
   After every bd write, verify with `bd show <id>`; if it did not land, fix it
   or print `RUN_BLOCKED`.
+- **Copy bead ids, never retype them.** Take the full id from the claim, the
+  `bd ready --json` output or `gh pr view`, and use it unchanged in every
+  `bd` command; never shorten it. Short and dotted ids look alike:
+  `<prefix>-225` and `<prefix>-b8p.25` are different beads. You may only
+  append notes to a bead you claimed in this run (the harness blocks others),
+  and the harness itself adds a missing `PR: <url>` line to the PR's beads.
 - Do exactly ONE issue per session:
   1. Pick the issue with exactly this command, and take the FIRST item:
      `bd ready --json --exclude-type epic --sort priority`

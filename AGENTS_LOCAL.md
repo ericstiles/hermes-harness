@@ -29,3 +29,11 @@ holds the rules that only apply here. Where the two conflict, this file wins.
 - Never edit `bin/hermes-run` or anything it sources while a `hermes-run` loop
   is running (check with `hermes-status`). Bash reads scripts as it executes
   them, so a rewrite mid-run makes the running loop execute the wrong bytes.
+
+## Review nits
+
+- Every review that lists nits gets its own new beads issue, whoever reviewed
+  (pr-reviewer, `/code-review`, a human): type task, priority P4 (below the work
+  it came from), label `review-nits`, `--deps discovered-from:<the PR's bead>`,
+  one line per nit with its `file[:line]`. Never add nits as a comment to an
+  existing bead. `.claude/agents/pr-reviewer.md` step 7 does this for its reviews.

@@ -43,7 +43,7 @@ git -C <tree> rebase origin/main            # must be clean; on conflict: rebase
 ```
 
 Always clean up at the end, success or failure:
-`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md <dir>/nits.md <dir>/nits-bead.md <dir>/nits-design.md <dir>/nits-accept.md && rmdir <dir>`.
+`git worktree remove --force <tree> && rm -f <dir>/gate.txt <dir>/review.md <dir>/nits-bead.md <dir>/nits-design.md <dir>/nits-accept.md && rmdir <dir>`.
 
 ## 3. Quality gate
 
@@ -146,26 +146,28 @@ Only when you posted a review in step 6 AND it lists at least one nit. Never in
 a dry run, never with no nits. Nits never block, so without this they live only
 in the PR comment and are lost between sessions.
 
-1. Find the collector: `bd list --label review-nits --status open --json --limit 0`.
-   Use the one with the oldest `created_at`. Status `open` only: a collector that
-   is `in_progress` is being worked, so it gets no new nits.
-2. If there is none, create one. Write `<dir>/nits-bead.md` with exactly this text:
+Every review with nits gets its OWN new bead, at P4 (below the work it came
+from), linked to the PR's bead. Never add nits as a comment to an existing bead,
+not even an open `review-nits` one.
+
+1. Write `<dir>/nits-bead.md` with this text, filling in the `<...>` parts:
 
    ```
    ## Goal
-   Fix the non-blocking nits pr-reviewer left on reviewed PRs, listed in this bead's comments.
+   Fix the non-blocking nits pr-reviewer left on PR #N (<bead id>), <merged as <short sha> | not merged>.
 
    ## Why
-   Nits never block a merge; this bead keeps them in one place so they are not lost.
+   Nits never block a merge; this bead keeps them so they are not lost.
 
    ## Current state
-   Each comment is one review: a `PR #N (<bead>)` line, then one `- <file[:line]> — <nit>` line per nit.
+   - <file[:line]> — <nit>
+   (one line per nit, the same nits as in the review; the line number only when the nit has one)
 
    ## Repro
    N/A: each nit names its file, and its line when it has one.
 
    ## In scope
-   The nits in the comments. Drop one, with the reason in the PR body, if it is wrong or no longer applies.
+   The nits above. Drop one, with the reason in the PR body, if it is wrong or no longer applies.
 
    ## Expected to modify
    The files the nits name.
@@ -199,29 +201,23 @@ in the PR comment and are lost between sessions.
    Write `<dir>/nits-accept.md` with exactly these three lines:
 
    ```
-   [ ] every nit in the comments is fixed, or dropped with the reason in the PR body
+   [ ] every nit above is fixed, or dropped with the reason in the PR body
    [ ] the quality gate from AGENTS_LOCAL.md passes
    [ ] git diff --stat shows only the files the nits name (or the PR body explains each other one)
    ```
 
-   Then: `bd create "Review nits from pr-reviewer" -t task -p 3 -l review-nits --body-file <dir>/nits-bead.md --design-file <dir>/nits-design.md --acceptance "$(cat <dir>/nits-accept.md)" --silent`.
-   It prints the new id. Check with `bd show <id>` that the description, design and
-   all three acceptance lines landed.
-3. Write `<dir>/nits.md`. Its first line is `PR #N (<bead id>), merged as <short sha>`
-   when you merged, or `PR #N (<bead id>), not merged` when you did not. Then one
-   `- <file[:line]> — <nit>` line per nit (the line only when the nit has one), the
-   same nits as in the review.
-4. `bd comments add <collector id> -f <dir>/nits.md`.
-5. Confirm: `bd comments <collector id>` shows a comment with your `PR #N` line. If
-   the create or the comment failed, report it under Output; it never undoes the
-   review or the merge.
-6. Do not run `bd dolt push`.
+2. `bd create "Review nits from PR #N (<bead id>)" -t task -p 4 -l review-nits --deps discovered-from:<bead id> --body-file <dir>/nits-bead.md --design-file <dir>/nits-design.md --acceptance "$(cat <dir>/nits-accept.md)" --silent`.
+   Leave out `--deps` only when the PR has no bead. It prints the new id.
+3. Confirm with `bd show <id>`: priority P4, label `review-nits`, every nit in the
+   description, the design, and all three acceptance lines. If the create failed,
+   report it under Output; it never undoes the review or the merge.
+4. Do not run `bd dolt push`.
 
 ## Never
 
 - Push, force-push, commit, or edit files in the repository or the worktree
   (other than the rebase in step 2). The Write tool is only for `<dir>/review.md`,
-  `<dir>/nits.md`, `<dir>/nits-bead.md`, `<dir>/nits-design.md` and `<dir>/nits-accept.md`.
+  `<dir>/nits-bead.md`, `<dir>/nits-design.md` and `<dir>/nits-accept.md`.
 - Merge when the gate failed, the rebase conflicted, `mergeable` is not
   `MERGEABLE`, or you found a blocking problem.
 - Merge more than the one PR you were given.
@@ -234,7 +230,7 @@ End with exactly:
 PR #N: APPROVED_AND_MERGED | CHANGES_NEEDED | DRY_RUN_APPROVE | DRY_RUN_CHANGES_NEEDED | NOT_REVIEWED (<reason>)
 Gate: passed=<n> failed=<n>   (or: not run, <reason>)
 Bead: <id> (<closed | left open | untouched (dry run) | none>)
-Nits bead: <id> (<created | comment added>) | none (<no nits | dry run>) | failed (<reason>)
+Nits bead: <id> (created, P4) | none (<no nits | dry run>) | failed (<reason>)
 Problems:
 1. <file:line> — <problem> — <fix>
 Nits:

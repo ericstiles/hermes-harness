@@ -66,6 +66,9 @@ if [ -n "$newest" ]; then
   age=$(( $(date +%s) - $(stat -f %m "$newest" 2>/dev/null || stat -c %Y "$newest" 2>/dev/null || date +%s) ))
   echo "file: $newest   last write: ${age}s ago"
   if [ "$ACTIVE" = 1 ] && [ "$age" -lt 1800 ]; then echo "class: RUNNING"; else echo "class: $(hermes_classify "$newest")"; fi
+  # the loop stopped between runs because the harness code changed (bead eyx)
+  stop=$(tr -d '\r' < "$newest" | sed -n 's/^LOOP_STOP=//p' | tail -n 1)
+  [ -n "$stop" ] && echo "loop stopped: $stop"
   echo "-- last $LINES_N lines"; tail -n "$LINES_N" "$newest" | tr -d '\r'
 else echo "unavailable: no logs in $LOG_DIR"; fi
 

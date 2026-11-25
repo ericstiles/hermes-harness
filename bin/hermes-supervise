@@ -137,8 +137,17 @@ esac
 # hermes-run stopped the loop between runs because its own code changed (bead eyx)
 loop_stop=$(tr -d '\r' < "$log" | sed -n 's/^LOOP_STOP=//p' | tail -n 1)
 if [ "$class" = OK_DONE ] && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
-  action=AUTO_RELAUNCH; next="hermes-launch --reason HARNESS_CHANGED"
-  why="the run finished and opened a PR, then hermes-run stopped the loop because the harness code changed (${loop_stop#HARNESS_CHANGED }); relaunch so the rest of the queue runs on the new code"
+  left=$(printf '%s\n' "$loop_stop" | sed -n 's/.* left=\([0-9][0-9]*\).*/\1/p')
+  files=$(printf '%s\n' "$loop_stop" | sed -n 's/.* files=//p')
+  # the per-issue counter cannot see these relaunches (no --issue): count them on their own
+  hc_today=$(awk -v d="$today" '$1==d && $2=="HARNESS_CHANGED"{n++} END{print n+0}' "$STATE" 2>/dev/null || echo 0)
+  if [ "$hc_today" -ge "$MAX_RELAUNCH" ]; then
+    action=ASK_HUMAN; next=""
+    why="hermes-run stopped the loop because the harness code changed (${files:-see LOOP_STOP}), and the HARNESS_CHANGED relaunch limit ($MAX_RELAUNCH/day) is reached: is the harness checkout still changing? Relaunch by hand: hermes-launch --reason HARNESS_CHANGED${left:+ --max $left}"
+  else
+    action=AUTO_RELAUNCH; next="hermes-launch --reason HARNESS_CHANGED${left:+ --max $left}"
+    why="the run finished and opened a PR, then hermes-run stopped the loop because the harness code changed (${files:-see LOOP_STOP}); relaunch so the rest of the queue runs on the new code"
+  fi
 fi
 
 echo "CLASS=$class"; echo "ISSUE=${issue:-unknown}"; echo "LOG=$log"

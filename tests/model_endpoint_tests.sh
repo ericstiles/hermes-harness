@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Sourced by tests/run_tests.sh (uses ok/bad/eq/say, $tmp $W $BIN $ROOT).
 # MODEL_API_ERROR: hermes-supervise's NEXT probes the endpoint the run used (lib/model_endpoint.sh),
-# not a hardcoded Ollama :11434 (bead b80). The provider comes from hermes-run's "== repo:" header,
-# else model.provider; the URL from model.base_url, else providers.<provider>.api.
+# not a hardcoded Ollama :11434 (bead b80). The provider comes from the run log's RUN_PROVIDER: line
+# (hermes-run writes it; tests/model_endpoint_run_tests.sh), else model.provider; the URL from
+# model.base_url, else providers.<provider>.api.
 ME="$tmp/model-endpoint"; mkdir -p "$ME/bin" "$ME/logs"
 # hermes stub: `config get <key>` prints $STUB_CFG_<key with . -> _>, else Hermes' "not set" line
 cat > "$ME/bin/hermes" <<'S'
@@ -18,12 +19,12 @@ me() { (PATH="$ME/bin:$PATH" "$@"); }
 mtplx_cfg() { env STUB_CFG_model_provider=ollama-launch STUB_CFG_providers_mtplx_api=http://127.0.0.1:8000/v1 \
   STUB_CFG_providers_ollama_launch_api=http://127.0.0.1:11434/v1 "$@"; }
 
-# --- provider from the run log's header ---
-printf '== repo: acme/widgets | model: m | provider: mtplx | sandbox: x | timeout: 90m\nbody\n' > "$ME/run.log"
-eq "model endpoint: provider read from the run header" "$(hh_run_provider "$ME/run.log")" mtplx
-printf '== repo: acme/widgets | model: m | provider: unknown | sandbox: x\n' > "$ME/unk.log"
-eq "model endpoint: provider 'unknown' in the header counts as none" "$(hh_run_provider "$ME/unk.log")" ""
-eq "model endpoint: no header, no provider" "$(hh_run_provider "$ROOT/tests/fixtures/model_api_error.log")" ""
+# --- provider from the run log's RUN_PROVIDER: line ---
+printf 'CONTEXT: baseline x\nRUN_PROVIDER: mtplx\nbody\nRUN_PROVIDER: other\n' > "$ME/run.log"
+eq "model endpoint: provider read from the run log's first RUN_PROVIDER: line" "$(hh_run_provider "$ME/run.log")" mtplx
+printf 'RUN_PROVIDER: unknown\n' > "$ME/unk.log"
+eq "model endpoint: RUN_PROVIDER: unknown counts as none" "$(hh_run_provider "$ME/unk.log")" ""
+eq "model endpoint: no RUN_PROVIDER: line, no provider" "$(hh_run_provider "$ROOT/tests/fixtures/model_api_error.log")" ""
 
 # --- probe command per provider ---
 eq "model endpoint: custom OpenAI-compatible provider probes <base>/models" \
@@ -54,12 +55,12 @@ out=$(me bash -c ". '$ROOT/lib/model_endpoint.sh'; hh_model_probe 'a b;c'" 2>&1)
 [ $rc -ne 0 ] && [ -z "$out" ] && ok "model endpoint: an unsafe provider name is refused" || bad "model endpoint: unsafe provider" "$rc $out"
 
 # --- hermes-supervise end to end ---
-{ printf '== repo: acme/widgets | model: m | provider: mtplx | sandbox: x | timeout: 90m\n'; cat "$ROOT/tests/fixtures/model_api_error.log"; } > "$ME/logs/run-1.log"
+{ printf 'RUN_PROVIDER: mtplx\n'; cat "$ROOT/tests/fixtures/model_api_error.log"; } > "$ME/logs/run-1.log"
 out=$(cd "$W" && me mtplx_cfg env HERMES_LOG_DIR="$ME/logs" "$BIN/hermes-supervise" "$ME/logs/run-1.log")
 say "$out" | grep -qx 'NEXT=curl -sf --max-time 10 http://127.0.0.1:8000/v1/models >/dev/null && hermes-launch --reason MODEL_API_ERROR --issue unknown' \
-  && ok "supervise MODEL_API_ERROR: probes the run's custom endpoint" || bad "supervise custom endpoint" "$out"
+  && ok "supervise MODEL_API_ERROR: a run on mtplx probes its endpoint although model.provider is ollama-launch" || bad "supervise custom endpoint" "$out"
 say "$out" | grep -q '^WHY=.*http://127.0.0.1:8000/v1/models' && ok "supervise MODEL_API_ERROR: WHY names the probed URL" || bad "supervise custom WHY" "$out"
-{ printf '== repo: acme/widgets | model: m | provider: ollama-launch | sandbox: x\n'; cat "$ROOT/tests/fixtures/model_api_error.log"; } > "$ME/logs/run-2.log"
+{ printf 'RUN_PROVIDER: ollama-launch\n'; cat "$ROOT/tests/fixtures/model_api_error.log"; } > "$ME/logs/run-2.log"
 out=$(cd "$W" && me mtplx_cfg env HERMES_LOG_DIR="$ME/logs" "$BIN/hermes-supervise" "$ME/logs/run-2.log")
 say "$out" | grep -q '^NEXT=curl -sf --max-time 10 http://127.0.0.1:11434/api/tags >/dev/null && hermes-launch ' \
   && ok "supervise MODEL_API_ERROR: Ollama run still probes /api/tags" || bad "supervise ollama endpoint" "$out"

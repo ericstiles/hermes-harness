@@ -316,6 +316,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/epics_tests.sh"
   # the bead being worked and the queue statistics (lib/bead_stats.py)
   . "$HERE/bead_stats_tests.sh"
+  # every run log records its effective provider (RUN_PROVIDER:) for hermes-supervise (b80)
+  . "$HERE/model_endpoint_run_tests.sh"
   # no remote and no GITHUB_REPO -> clear error
   git -C "$W" remote remove origin
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?

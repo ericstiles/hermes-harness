@@ -233,9 +233,12 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   # A resumed or wrap-up run (a session id was given) skips it: it describes a FRESH session's
   # prompt, and its time limit would eat into a short wrap-up (0af).
   # The BEADS: line (9jj) follows it: the bead the agent is expected to pick, and the queue.
+  # Every run, resumed ones too, then records its effective provider (RUN_PROVIDER:): hermes-supervise
+  # checks that provider's endpoint after a MODEL_API_ERROR (b80); HERMES_ARGS may override config.
   local baseline="" beads=""; [ -n "${2:-}" ] || { baseline=$(baseline_line); beads=$(beads_start_line); }
   { [ -z "$baseline" ] || printf '%s\n' "$baseline"
     [ -z "$beads" ] || printf '%s\n' "$beads"
+    printf 'RUN_PROVIDER: %s\n' "${PROVIDER:-unknown}"
     python3 -u "$WATCHDOG" --limit "$1" --extend "$extend" --cap "$cap" --log "$log" -- \
       hermes chat --pass-session-id ${resume[@]+"${resume[@]}"} ${HERMES_ARGS:-} -q "$prompt" 2>&1; } \
     | tee "$log" 2>"$tee_err" | python3 -u "$HARNESS_HOME/lib/tsfilter.py" --log "$timed" --id "$STAMP_ID"

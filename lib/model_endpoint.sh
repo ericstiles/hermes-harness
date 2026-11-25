@@ -16,10 +16,9 @@ hh_cfg_get() { # <key> -> value; fails when unset (Hermes prints "Config key not
   printf '%s\n' "$v"
 }
 
-hh_run_provider() { # <logfile> -> the provider hermes-run printed in its "== repo:" header, or empty
+hh_run_provider() { # <logfile> -> the provider hermes-run wrote into the run log (RUN_PROVIDER:), or empty
   [ -r "$1" ] || return 0
-  tr -d '\r' < "$1" | sed -n 's/^== repo: .* | provider: \([^ |]*\) |.*/\1/p' | head -n 1 \
-    | grep -Ev '^unknown$' || true
+  tr -d '\r' < "$1" | sed -n 's/^RUN_PROVIDER: \([^ ]*\)$/\1/p' | head -n 1 | grep -Ev '^unknown$' || true
 }
 
 hh_is_ollama() { # <provider> <url>: an Ollama server (by provider name or its default port)
@@ -49,8 +48,7 @@ hh_model_base_url() { # <provider> -> its base URL; fails when it cannot be reso
 
 hh_model_probe_url() { # <provider> -> the URL that answers when the endpoint is up
   local provider=$1 url
-  [ -z "$provider" ] || printf '%s' "$provider" | grep -Eq "$HH_PROVIDER_ERE" || return 1
-  url=$(hh_model_base_url "$provider") || return 1
+  url=$(hh_model_base_url "$provider") || return 1 # also refuses an unsafe provider name
   [ -n "$provider" ] || provider=$(hh_cfg_get model.provider) || provider=""
   if hh_is_ollama "$provider" "$url"; then
     printf '%s/api/tags\n' "${url%/v1}" # Ollama's native list; its OpenAI route lives under /v1
@@ -59,8 +57,12 @@ hh_model_probe_url() { # <provider> -> the URL that answers when the endpoint is
   fi
 }
 
+hh_probe_command() { # <url> -> shell command that succeeds when the URL answers
+  printf 'curl -sf --max-time %s %s >/dev/null\n' "$HH_PROBE_TIMEOUT" "$1"
+}
+
 hh_model_probe() { # <provider> -> shell command that succeeds when the endpoint answers
   local url
   url=$(hh_model_probe_url "$1") || return 1
-  printf 'curl -sf --max-time %s %s >/dev/null\n' "$HH_PROBE_TIMEOUT" "$url"
+  hh_probe_command "$url"
 }

@@ -15,6 +15,9 @@ ctx_of() { # <raw log> -> its single CONTEXT: line, or a marker that makes cmp f
 beads_of() { # <raw log> -> its second line if it is the BEADS: start line (9jj), else a marker
   sed -n 2p "$1" | grep '^BEADS: ' || echo "<no BEADS: second line>"
 }
+prov_of() { # <raw log> -> its third line if it is the RUN_PROVIDER: line (b80), else a marker
+  sed -n 3p "$1" | grep '^RUN_PROVIDER: ' || echo "<no RUN_PROVIDER: third line>"
+}
 base_of() { # <raw log> -> its first line if it is the CONTEXT: baseline line (39w.3), else a marker
   head -n 1 "$1" | grep '^CONTEXT: baseline ' || echo "<no CONTEXT: baseline first line>"
 }
@@ -24,7 +27,7 @@ for pair in timeout_killed:TIMEOUT blocked:BLOCKED queue_empty:QUEUE_EMPTY model
             trap_test_404_and_aux_timeout:OK_DONE trap_sentinel_in_prose:OK_DONE trap_sync_in_prose:OK_DONE; do
   n=${pair%%:*}; want=${pair##*:}; rm -rf "$W/logs"
   STUB_FIXTURE="$FX/$n.log" runit "$BIN/hermes-run" 1 >/dev/null 2>&1
-  { base_of "$(only_log)"; beads_of "$(only_log)"; cat "$FX/$n.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=$want"; } > "$tmp/want_raw"
+  { base_of "$(only_log)"; beads_of "$(only_log)"; prov_of "$(only_log)"; cat "$FX/$n.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=$want"; } > "$tmp/want_raw"
   cmp -s "$tmp/want_raw" "$(only_log)" || { same=no; diffs="$diffs $n"; }
 done
 eq "timestamps: raw run log still classifies exactly as before (11 fixtures)" "$same" "yes${diffs:+ ($diffs)}"
@@ -60,7 +63,7 @@ rm -rf "$W/logs"; mkdir -p "$tmp/deadpy"
 printf '#!/bin/sh\ncase "$*" in *tsfilter.py*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "$tmp/deadpy/python3"; chmod +x "$tmp/deadpy/python3"
 { seq 1 20000 | sed 's/^/filler line /'; tail -n 8 "$FX/ok_done.log"; } > "$tmp/big.log"
 out=$(PATH="$tmp/deadpy:$PATH" STUB_FIXTURE="$tmp/big.log" runit "$BIN/hermes-run" 1 2>&1); rc=$?
-{ base_of "$(only_log)"; beads_of "$(only_log)"; cat "$tmp/big.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=OK_DONE"; } > "$tmp/want_big"
+{ base_of "$(only_log)"; beads_of "$(only_log)"; prov_of "$(only_log)"; cat "$tmp/big.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=OK_DONE"; } > "$tmp/want_big"
 [ $rc -eq 0 ] && cmp -s "$tmp/want_big" "$(only_log)" && say "$out" | grep -q 'timestamp filter' \
   && ok "timestamps: a dead filter leaves the raw log complete and warns" || bad "timestamps: dead filter" "$rc $(wc -l < "$(only_log)") $(echo "$out" | tail -3)"
 # BSD tee with SIGPIPE ignored prints "Broken pipe" per write; that must not flood the terminal

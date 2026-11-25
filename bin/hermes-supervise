@@ -23,7 +23,7 @@
 #   SANDBOX_DOWN     AUTO_RELAUNCH after `colima start`.
 #   BEADS_SYNC_ERROR AUTO_RELAUNCH after `bd dolt pull` (never force-push).
 #   MODEL_API_ERROR  AUTO_RELAUNCH once the run's model endpoint answers (provider from the run
-#                    log's header, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
+#                    log's RUN_PROVIDER: line, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
 #                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
 #   QUEUE_EMPTY / OK_DONE  DONE / WAIT: nothing to do.
 #   AUTH_ERROR / BLOCKED / UNKNOWN   ASK_HUMAN with evidence.
@@ -99,9 +99,9 @@ case "$class" in
     if [ "$(awk '$2=="MODEL_API_ERROR"{n++} END{print n+0}' "$STATE" 2>/dev/null)" -ge 3 ]; then why="3 model/API failures in a row"
     else
       provider=$(hh_run_provider "$work_log")
-      if probe=$(hh_model_probe "$provider"); then
-        action=AUTO_RELAUNCH; next="$probe && hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"
-        why="model server error; confirm the run's endpoint answers ($(hh_model_probe_url "$provider")), then relaunch"
+      if url=$(hh_model_probe_url "$provider"); then
+        action=AUTO_RELAUNCH; next="$(hh_probe_command "$url") && hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"
+        why="model server error; confirm the run's endpoint answers ($url), then relaunch"
       else why="model server error, and the endpoint of provider '${provider:-<model.provider>}' is not in Hermes' config (model.base_url or providers.<name>.api), so it cannot be checked: start the model server, then hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"; fi
     fi ;;
   AGENT_CRASHED)

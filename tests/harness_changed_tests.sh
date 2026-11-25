@@ -38,7 +38,7 @@ runlog=$(ls "$W"/logs/run-*.log | head -n 1)
   && ok "harness changed: a changed sourced lib stops the loop after the current run" || bad "harness changed: stop" "$rc $(chats) $(say "$out" | tail -4)"
 say "$out" | grep -q '^HARNESS_CHANGED: .*(lib/classify.sh)\..*Stopping before run 2.*hermes-launch --reason HARNESS_CHANGED --max 2$' \
   && ok "harness changed: the message names the changed file, why it stopped, and the relaunch command" || bad "harness changed: message" "$(say "$out" | grep HARNESS_CHANGED)"
-grep -q '^RUN_RESULT=OK_DONE$' "$runlog" && [ "$(tail -n 1 "$runlog")" = "LOOP_STOP=HARNESS_CHANGED files=lib/classify.sh" ] \
+grep -q '^RUN_RESULT=OK_DONE$' "$runlog" && [ "$(tail -n 1 "$runlog")" = "LOOP_STOP=HARNESS_CHANGED left=2 files=lib/classify.sh" ] \
   && ok "harness changed: the finished run keeps RUN_RESULT=OK_DONE; its log ends with LOOP_STOP" || bad "harness changed: run log" "$(tail -3 "$runlog")"
 say "$out" | grep -q '^RUN_TIME total=.* runs=1$' && say "$out" | tail -n 3 | grep -q '^BEADS: ' \
   && ok "harness changed: the loop summary still prints" || bad "harness changed: summary" "$(say "$out" | tail -5)"
@@ -46,13 +46,26 @@ say "$out" | grep -q '^RUN_TIME total=.* runs=1$' && say "$out" | tail -n 3 | gr
 # --- hermes-supervise: shows why the loop stopped and relaunches ---
 out=$(HERMES_LOG_DIR="$W/logs" runit "$HC/bin/hermes-supervise" "$runlog")
 say "$out" | grep -q '^CLASS=OK_DONE$' && say "$out" | grep -q '^ACTION=AUTO_RELAUNCH$' \
-  && say "$out" | grep -q '^NEXT=hermes-launch --reason HARNESS_CHANGED$' \
-  && say "$out" | grep -q '^LOOP_STOP=HARNESS_CHANGED files=lib/classify.sh$' && say "$out" | grep -q '^WHY=.*harness code changed' \
-  && ok "harness changed: supervise reports it and relaunches" || bad "harness changed: supervise" "$out"
+  && say "$out" | grep -q '^NEXT=hermes-launch --reason HARNESS_CHANGED --max 2$' \
+  && say "$out" | grep -q '^LOOP_STOP=HARNESS_CHANGED left=2 files=lib/classify.sh$' && say "$out" | grep -q '^WHY=.*harness code changed' \
+  && ok "harness changed: supervise reports it and relaunches with the issues that were left" || bad "harness changed: supervise" "$out"
+# the per-issue counter cannot see these relaunches: their own limit, 3 a day, then a human
+d=$(date +%Y%m%d); printf '%s HARNESS_CHANGED unknown\n' "$d" "$d" "$d" > "$W/logs/.relaunches"
+out=$(HERMES_LOG_DIR="$W/logs" runit "$HC/bin/hermes-supervise" "$runlog")
+say "$out" | grep -q '^ACTION=ASK_HUMAN$' && ! say "$out" | grep -q '^NEXT=' && say "$out" | grep -q '^WHY=.*relaunch limit (3/day)' \
+  && ok "harness changed: after 3 HARNESS_CHANGED relaunches today, supervise asks the human" || bad "harness changed: relaunch limit" "$out"
+printf '%s HARNESS_CHANGED unknown\n' 20000101 20000101 20000101 > "$W/logs/.relaunches"
+out=$(HERMES_LOG_DIR="$W/logs" runit "$HC/bin/hermes-supervise" "$runlog")
+say "$out" | grep -q '^ACTION=AUTO_RELAUNCH$' && ok "harness changed: only today's HARNESS_CHANGED relaunches count" || bad "harness changed: old relaunches" "$out"
+rm -f "$W/logs/.relaunches"
+# hermes-status names the stop
+out=$(runit "$HC/bin/hermes-status" 2>&1)
+say "$out" | grep -q '^loop stopped: HARNESS_CHANGED left=2 files=lib/classify.sh$' \
+  && ok "harness changed: hermes-status says the loop stopped and why" || bad "harness changed: status" "$(say "$out" | grep -A3 'latest log')"
 
 # --- hermes-run itself changes (a pull or branch switch): same stop ---
 cp "$HC/bin/hermes-run" "$tmp/run.bak"
 out=$(STUB_FIXTURE="$FX/ok_done.log" STUB_TOUCH="$HC/bin/hermes-run" hc_run 2); rc=$?
 cp "$tmp/run.bak" "$HC/bin/hermes-run"
-[ $rc -eq 1 ] && [ "$(chats)" = 1 ] && say "$out" | grep -q '^HARNESS_CHANGED: .*(bin/hermes-run)' && say "$out" | grep -q '^FINAL_RESULT=HARNESS_CHANGED$' \
+[ $rc -eq 1 ] && [ "$(chats)" = 1 ] && say "$out" | grep -q '^HARNESS_CHANGED: .*(bin/hermes-run)' && [ "$(say "$out" | tail -n 1)" = "FINAL_RESULT=HARNESS_CHANGED" ] \
   && ok "harness changed: a change to hermes-run itself stops the loop cleanly" || bad "harness changed: hermes-run edited" "$rc $(chats) $(say "$out" | tail -4)"

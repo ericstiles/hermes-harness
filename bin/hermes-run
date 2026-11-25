@@ -419,7 +419,7 @@ harness_changed() { # <changed paths> <next run number>: say why, mark the last 
   echo "HARNESS_CHANGED: the harness code changed since this loop started ($1)." \
     "Stopping before run $2 so the next loop runs the new code; the finished runs are not affected." \
     "Relaunch from $REPO_ROOT: hermes-launch --reason HARNESS_CHANGED --max $((MAX - $2 + 1))"
-  [ -n "${log:-}" ] && echo "LOOP_STOP=HARNESS_CHANGED files=$1" >> "$log"
+  [ -n "${log:-}" ] && echo "LOOP_STOP=HARNESS_CHANGED left=$((MAX - $2 + 1)) files=$1" >> "$log"
   final=HARNESS_CHANGED
   loop_epilogue
 }
@@ -494,5 +494,5 @@ for i in $(seq 1 "$MAX"); do
     AGENT_STOPPED) echo "Agent stopped mid-issue without a PR — stopping. Read the end of $log, then resume by hand: hermes --resume $(session_id "$log")"; break ;;
     *) echo "Run ended as $class — stopping. See $log"; break ;;
   esac
-done
-loop_epilogue
+# On the same line as `done`, so bash parses it with the loop and never re-reads this file for it.
+done; loop_epilogue

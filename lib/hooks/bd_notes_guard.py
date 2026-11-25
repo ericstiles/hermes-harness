@@ -9,6 +9,12 @@
    (`bd update <id> --claim`) are recorded in the file named by HERMES_HARNESS_CLAIMS, which
    bin/hermes-run exports and empties per loop iteration; a claim earlier in the same command
    counts. Without HERMES_HARNESS_CLAIMS this check is off.
+   A claim is recorded when the command is allowed, before bd runs, so a claim bd refuses
+   (bead already claimed by another actor, unknown id) still counts for the rest of the
+   iteration. A pre_tool_call hook cannot see bd's answer. That is acceptable: the check
+   catches a mistyped id on --append-notes, and a refused claim names the id the agent chose
+   to claim, not a retyped one. An unknown id also makes the append fail in bd, and
+   lib/notes_check.sh still reports any bead that wrongly carries the PR URL after the run.
 
 Wire protocol (~/.hermes/hermes-agent/agent/shell_hooks.py): Hermes pipes
 {"tool_name": ..., "tool_input": {"command": ...}, ...} on stdin; printing
@@ -45,13 +51,16 @@ _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _PREFIXES = {"command", "env", "exec", "sudo", "nohup", "time"}
 # Fallback when the command cannot be tokenized (unbalanced quotes).
 _FALLBACK = re.compile(r"\bbd\s[^;&|\n]*\bupdate\b[^;&|\n]*(?<![\w-])--notes(?=[\s=]|$)")
-# bd update flags that take a value; the value is never a bead id.
+# bd update flags that take a value (`bd update --help`: string, strings, stringArray, int);
+# the value is never a bead id. tests/notes_guard_tests.sh compares this with the real bd.
 _VALUE_FLAGS = {
     "--append-notes", "--notes", "--status", "-s", "--assignee", "-a", "--title",
     "--description", "-d", "--design", "--acceptance", "--priority", "-p", "--type", "-t",
     "--add-label", "--remove-label", "--set-labels", "-l", "--parent", "--if-assignee",
     "--if-status", "--estimate", "-e", "--external-ref", "--due", "--defer", "--body-file",
-    "--description-file", "--metadata", "--spec-id", "--actor", "--db",
+    "--description-file", "--metadata", "--spec-id", "--actor", "--db", "--await-id",
+    "--design-file", "--session", "--set-metadata", "--unset-metadata", "--database", "-C",
+    "--directory", "--dolt-auto-commit", "--mem-profile",
 }  # fmt: skip
 
 

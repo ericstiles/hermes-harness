@@ -38,10 +38,11 @@ _nc_state() { # <id> <url> -> "<status> yes|no" (URL in notes?); non-zero if bd 
   local json
   json=$(bd show "$1" --json 2>/dev/null) || return 1
   printf '%s' "$json" | python3 -c '
-import json, sys
+import json, re, sys
 d = json.load(sys.stdin)
 d = d[0] if isinstance(d, list) else d
-print(d["status"], "yes" if sys.argv[1] in str(d.get("notes") or "") else "no")' "$2" 2>/dev/null
+has = re.search(re.escape(sys.argv[1]) + r"(?!\d)", str(d.get("notes") or ""))
+print(d["status"], "yes" if has else "no")' "$2" 2>/dev/null
 }
 
 _nc_rfc3339() { # <epoch> -> UTC RFC3339, one minute early (clock skew between host and bd)
@@ -55,12 +56,13 @@ _nc_strays() { # <url> <since-epoch> <T> [F] -> ids of beads wrongly carrying th
   json=$(bd list --all --notes-contains "$1" --updated-after "$(_nc_rfc3339 "$2")" --json --limit 0 \
     2>/dev/null) || return 1
   printf '%s' "$json" | python3 -c '
-import json, sys
+import json, re, sys
 url, t, f = sys.argv[1], sys.argv[2], sys.argv[3]
 side = "Fixed in PR %s via review-fix %s" % (url, f) if f else None
+has_url = re.compile(re.escape(url) + r"(?!\d)")  # pull/12 must not match pull/120
 for d in json.loads(sys.stdin.read() or "[]"):
     notes = str(d.get("notes") or "")
-    if d["id"] in (t, f) or url not in notes:
+    if d["id"] in (t, f) or not has_url.search(notes):
         continue
     if side and side in notes:
         continue

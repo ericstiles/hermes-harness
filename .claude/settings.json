@@ -36,7 +36,7 @@
       {
         "hooks": [
           {
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/gh_merge_guard.py\"",
+            "command": "f=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/gh_merge_guard.py\"; [ -f \"$f\" ] || f=\"$CLAUDE_PROJECT_DIR/.claude/hooks/gh_merge_guard.py\"; exec python3 \"$f\"",
             "type": "command"
           }
         ],

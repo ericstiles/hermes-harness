@@ -37,3 +37,12 @@ holds the rules that only apply here. Where the two conflict, this file wins.
   it came from), label `review-nits`, `--deps discovered-from:<the PR's bead>`,
   one line per nit with its `file[:line]`. Never add nits as a comment to an
   existing bead. `.claude/agents/pr-reviewer.md` step 7 does this for its reviews.
+
+## Reviewing PRs
+
+- When work is done and its PR is open, start the `pr-reviewer` agent on it at
+  once, review-only: it posts its review and creates the nits bead, but does not
+  merge and does not close the bead. Merging waits for the owner's OK
+  (`CLAUDE.md`, "Still ask first"); after an explicit OK, merge with the rebase
+  merge command on its own (the merge guard hook allows nothing else) and close
+  the bead with the merge commit.

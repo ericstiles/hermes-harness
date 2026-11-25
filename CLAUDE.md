@@ -21,6 +21,11 @@ it replaces the Conservative "do not commit or push" default below. A current
   `git push -u origin HEAD:refs/heads/<branch>`.
 - Before every commit, `tests/run_tests.sh` must pass; if it fails, do not
   commit, report the failure.
+- Once the PR is open, without asking first: start the `pr-reviewer` agent on
+  it in review-only mode ("review PR #N, post the review, do not merge, do not
+  close the bead"), then report its verdict, gate result and nits bead. If the
+  review asks for changes, fix them on the same branch and start a new
+  review-only run.
 - Several related changes may share one branch and PR; unrelated changes get
   their own.
 - Still ask first: pushing to `main`, merging a PR, force-pushing, `bd dolt push`,

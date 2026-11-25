@@ -35,7 +35,9 @@ Options:
                       Hermes run, one PR.
   --reason CLASS      why this launch happens; recorded in the relaunch log
                       (default: manual). hermes-supervise passes TIMEOUT,
-                      SANDBOX_DOWN, BEADS_SYNC_ERROR or MODEL_API_ERROR.
+                      SANDBOX_DOWN, BEADS_SYNC_ERROR or MODEL_API_ERROR. MODEL_OOM
+                      (the model server ran out of memory) is never relaunched
+                      automatically: a human frees memory or shrinks the context.
   --issue ID          beads issue this relaunch is for; recorded with --reason
                       so hermes-supervise can enforce its 3-per-issue-per-day
                       limit (default: unknown).

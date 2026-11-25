@@ -4,11 +4,13 @@
 #   . "$HARNESS_HOME/lib/classify.sh"
 #   hermes_classify <logfile> [exit_code]   -> prints ONE class name
 #
-# Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_API_ERROR SANDBOX_DOWN
+# Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_OOM MODEL_API_ERROR SANDBOX_DOWN
 #          AUTH_ERROR BEADS_SYNC_ERROR TURN_LIMIT AGENT_STOPPED AGENT_CRASHED NOTES_LOST UNKNOWN
 # TURN_LIMIT: the session used its whole tool-call budget without a PR or sentinel: Hermes'
 # "Reached maximum iterations" banner, or the `STOP_REASON:` line hermes-run copies from
 # agent.log (lib/stop_reason.sh) says max_iterations_reached / budget_exhausted / api_calls n/n.
+# MODEL_OOM: a MODEL_API_ERROR whose log says "insufficient memory" (the MLX server ran out of memory
+# during prefill). A relaunch hits the same wall, so a human frees memory or shrinks the context.
 # NOTES_LOST is never inferred from Hermes output: hermes-run writes RUN_RESULT=NOTES_LOST
 # when an OK_DONE run's bead lost its PR link (lib/notes_check.sh), and step 1 reads it back.
 # Patterns are anchored to the formats seen in real logs so agent narration or
@@ -49,7 +51,8 @@ hermes_classify() {
   fi
   # Model/API failure: Hermes' own retry banner, and no real work done.
   if grep -qE 'API call failed \(attempt [0-9]+/[0-9]+\)' "$f" && { [ -z "$tools" ] || [ "$tools" = "0" ]; }; then
-    echo MODEL_API_ERROR; return 0
+    if grep -qi 'insufficient memory' "$f"; then echo MODEL_OOM; else echo MODEL_API_ERROR; fi
+    return 0
   fi
   # Sentinels must be a whole line (the prompt/AGENTS text mentions them inline).
   if printf '%s\n' "$tail30" | grep -qE '^RUN_BLOCKED$'; then echo BLOCKED; return 0; fi

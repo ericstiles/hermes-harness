@@ -456,6 +456,7 @@ for i in $(seq 1 "$MAX"); do
       echo "Queue empty."; final=QUEUE_EMPTY; break ;;
     BLOCKED) echo "Issue blocked — stopping. See $log"; break ;;
     MODEL_API_ERROR) echo "Agent made no progress (model/API error) — stopping. See $log"; break ;;
+    MODEL_OOM) echo "The model server ran out of memory — stopping; a relaunch would hit the same wall. Fix one, then relaunch: free memory (quit other apps), restart the model server, lower the context (model.context_length / the server's --context-window), or use a q8 KV cache. See $log"; break ;;
     TIMEOUT) echo "Run timed out — stopping. See $log"; break ;;
     TURN_LIMIT) echo "The session used its whole tool-call budget ($(sed -n 's/^STOP_REASON: //p' "$claim_log" | tail -n 1)) — the issue is probably too big: split it. Stopping. See $claim_log"; break ;;
     AGENT_CRASHED) echo "Hermes crashed (traceback in the log) — stopping. See $claim_log"; break ;;

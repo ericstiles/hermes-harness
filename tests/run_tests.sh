@@ -306,6 +306,8 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   . "$HERE/run_timestamps_tests.sh"
   # agent ended its turn early (no PR, no sentinel): classify AGENT_STOPPED, resume once
   . "$HERE/agent_stopped_tests.sh"
+  # the model server ran out of memory: MODEL_OOM, stop, never auto-relaunch (bead 3q0)
+  . "$HERE/model_oom_tests.sh"
   # after an OK_DONE run the bead must still carry the PR link (class NOTES_LOST)
   . "$HERE/notes_check_tests.sh"
   # a TIMEOUT or a Hermes crash resumes the session for a wrap-up that saves WIP (AGENT_CRASHED)

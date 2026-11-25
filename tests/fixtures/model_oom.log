@@ -1,0 +1,10 @@
+Query: x
+⚠️  API call failed (attempt 1/3): InternalServerError [HTTP 500]
+   Error: insufficient memory: the model server ran out of free memory during prefill
+⚠️  API call failed (attempt 2/3): InternalServerError [HTTP 500]
+   Error: insufficient memory: the model server ran out of free memory during prefill
+⚠️  API call failed (attempt 3/3): InternalServerError [HTTP 500]
+   Error: Insufficient Memory: the model server ran out of free memory during prefill
+Resume this session with:
+
+Messages:       1 (1 user, 0 tool calls)

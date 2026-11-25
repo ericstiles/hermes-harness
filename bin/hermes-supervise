@@ -22,6 +22,7 @@
 # WIP_SAVED=yes|no says whether the wrap-up confirmed it saved the work.
 #   SANDBOX_DOWN     AUTO_RELAUNCH after `colima start`.
 #   BEADS_SYNC_ERROR AUTO_RELAUNCH after `bd dolt pull` (never force-push).
+#   MODEL_OOM        ASK_HUMAN: the model server ran out of memory; a relaunch would hit it again.
 #   MODEL_API_ERROR  AUTO_RELAUNCH once the run's model endpoint answers (provider from the run
 #                    log's RUN_PROVIDER: line, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
 #                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
@@ -106,6 +107,8 @@ case "$class" in
         why="model server error; confirm the run's endpoint answers ($url), then relaunch"
       else why="model server error, and the endpoint of provider '${provider:-<model.provider>}' is not in Hermes' config (model.base_url or providers.<name>.api), so it cannot be checked: start the model server, then hermes-launch --reason MODEL_API_ERROR --issue ${issue:-unknown}"; fi
     fi ;;
+  MODEL_OOM)
+    why="the model server ran out of memory (insufficient memory during prefill), so a relaunch would hit it again: free memory (quit other apps), restart the model server, lower the context (model.context_length / the server's --context-window) or use a q8 KV cache, then hermes-launch --reason MODEL_OOM --issue ${issue:-unknown}" ;;
   AGENT_CRASHED)
     exc=$(tr -d '\r' < "$work_log" | grep -E '^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit)(: |$)' | tail -n 1)
     if [ "$relaunches" -ge "$MAX_RELAUNCH" ]; then why="Hermes crashed (${exc:-see the traceback}) and the relaunch limit ($MAX_RELAUNCH/day) is reached for $issue"

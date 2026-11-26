@@ -116,7 +116,19 @@ pc PATH="$tmp/pc-elsewhere:$PATH"
 [ $rc -eq 0 ] && [ "$(say "$out" | head -n 1)" = PULL=SAFE ] && ff \
   && ok "pull-check: unrelated and ignored untracked files stay SAFE (the pull works)" || bad "pull-check: unrelated untracked" "rc=$rc $out"
 rm -f "$PH/unrelated.txt"
-unset -f ff untracked_case
+
+# --- bead 17c: a renamed loaded file counts under its old path, the one a running loop has ---
+rename() { # <from> <to> : rename a file in the seed and push it to origin/main
+  PG -C "$PSD" mv "$1" "$2"; PG -C "$PSD" commit -q -m "rename $1"; PG -C "$PSD" push -q origin HEAD:main
+}
+rename lib/runtime.sh lib/runtime_moved.sh
+pc PATH="$tmp/pc-busy:$PATH"
+[ $rc -eq 1 ] && [ "$(say "$out" | head -n 1)" = PULL=WAIT ] \
+  && say "$out" | grep -q 'lib/runtime.sh (sourced by hermes-run)' \
+  && ok "pull-check: renaming a loaded file with a loop running is WAIT (old path named)" \
+  || bad "pull-check: renamed loaded file" "rc=$rc $out"
+rename lib/runtime_moved.sh lib/runtime.sh; pc; ff # net no change: leave the clone up to date
+unset -f ff untracked_case rename
 
 # --- a failed fetch warns and judges from the last fetched origin/main ---
 PG -C "$PH" remote set-url origin "$tmp/no-such-remote.git"

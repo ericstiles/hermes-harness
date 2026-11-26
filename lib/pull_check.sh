@@ -90,7 +90,8 @@ hh_pull_check() { # <harness> <fetch: 1|0> -> PULL=<verdict> and evidence; retur
     return 2
   fi
   [ "$behind" -eq 0 ] && { echo "PULL=UP_TO_DATE"; echo "evidence: main is at origin/main"; return 0; }
-  changed=$(git -C "$h" -c core.quotePath=false diff --name-only HEAD origin/main)
+  # --no-renames: a rename must list its old path too, the one a running loop has loaded (bead 17c)
+  changed=$(git -C "$h" -c core.quotePath=false diff --name-only --no-renames HEAD origin/main)
   blocked=$(hh_untracked_in_way "$h" "$changed" | paste -sd ' ' -)
   if [ -n "$blocked" ]; then
     hh_cannot "untracked file(s) the pull would overwrite: $blocked" "move or delete them first (git -C '$h' status)"

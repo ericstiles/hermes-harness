@@ -62,6 +62,27 @@ pc PATH="$tmp/pc-linked:$PATH"
 [ $rc -eq 1 ] && [ "$(say "$out" | head -n 1)" = PULL=WAIT ] \
   && ok "pull-check: a loop started through a PATH symlink to this checkout counts" || bad "pull-check: symlink loop" "rc=$rc $out"
 
+# --- bead jbi: a loop started through a relative path or a bare name. hermes-run cds into the target
+# repo, so nothing tells which checkout that path meant: it counts (fail safe).
+for cmd in "bash ./hermes-run 10" "bash bin/hermes-run 10" "/bin/bash -x hermes-run" "./hermes-run 10"; do
+  loops "$tmp/pc-rel" "$cmd"
+  pc PATH="$tmp/pc-rel:$PATH"
+  [ $rc -eq 1 ] && [ "$(say "$out" | head -n 1)" = PULL=WAIT ] && say "$out" | grep -q 'running: 101' \
+    && ok "pull-check: relative loop '$cmd' counts" || bad "pull-check: relative loop '$cmd'" "rc=$rc $out"
+done
+loops "$tmp/pc-mention" "vim bin/hermes-run" "grep -n x hermes-run" "hermes chat -q fix hermes-run please"
+pc PATH="$tmp/pc-mention:$PATH"
+[ $rc -eq 0 ] && [ "$(say "$out" | head -n 1)" = PULL=SAFE ] \
+  && ok "pull-check: a relative mention of hermes-run that is not running it does not count" \
+  || bad "pull-check: mention counted" "rc=$rc $out"
+out=$("$PH/bin/hermes-pull-check" --bogus 2>&1 </dev/null); rc=$?
+[ $rc -eq 64 ] && ok "pull-check: an unknown option exits 64" || bad "pull-check: usage exit" "rc=$rc $out"
+"$PH/bin/hermes-pull-check" --help 2>&1 </dev/null | grep -q '64' \
+  && ok "pull-check: --help documents exit 64" || bad "pull-check: --help 64" "no 64 in --help"
+out=$(bash -c '. "$1/lib/freshness.sh"; . "$1/lib/code_stamp.sh"; . "$1/lib/pull_check.sh"
+  hh_pull_check "$1" 0 >/dev/null; type cannot' _ "$PH" 2>&1); rc=$?
+[ $rc -ne 0 ] && ok "pull-check: no global cannot() after hh_pull_check" || bad "pull-check: cannot leaks" "$out"
+
 # --- cannot fast-forward: dirty, off main, diverged ---
 echo dirty >> "$PH/README.md"
 pc PATH="$tmp/pc-busy:$PATH"
@@ -76,6 +97,26 @@ echo local > "$PH/local.txt"; PG -C "$PH" add -A; PG -C "$PH" commit -q -m local
 pc PATH="$tmp/pc-busy:$PATH"
 [ $rc -eq 2 ] && say "$out" | grep -q 'diverged' && ok "pull-check: a diverged main is CANNOT" || bad "pull-check: diverged" "rc=$rc $out"
 PG -C "$PH" reset -q --hard origin/main
+
+# --- bead jbi: untracked files the pull would overwrite make git refuse it ---
+ff() { PG -C "$PH" merge -q --ff-only origin/main; } # what `git pull --ff-only` does after its fetch
+untracked_case() { # <label> <upstream file> <local untracked path>
+  upstream "$2"; echo mine > "$PH/$3"
+  pc PATH="$tmp/pc-elsewhere:$PATH"
+  [ $rc -eq 2 ] && [ "$(say "$out" | head -n 1)" = PULL=CANNOT ] && say "$out" | grep -q "untracked.*$3" \
+    && ! ff && ok "pull-check: $1 is CANNOT" || bad "pull-check: $1" "rc=$rc $out"
+  rm -f "$PH/$3"; ff
+}
+untracked_case "an untracked file the pull adds" new.txt new.txt
+mkdir -p "$PSD/docs"
+untracked_case "an untracked file where the pull needs a folder" docs/x.md docs
+mkdir -p "$PH/.git/info"; echo ignored.txt >> "$PH/.git/info/exclude" # no template dir: no info/ yet
+upstream other.txt; upstream ignored.txt; echo mine > "$PH/unrelated.txt"; echo mine > "$PH/ignored.txt"
+pc PATH="$tmp/pc-elsewhere:$PATH"
+[ $rc -eq 0 ] && [ "$(say "$out" | head -n 1)" = PULL=SAFE ] && ff \
+  && ok "pull-check: unrelated and ignored untracked files stay SAFE (the pull works)" || bad "pull-check: unrelated untracked" "rc=$rc $out"
+rm -f "$PH/unrelated.txt"
+unset -f ff untracked_case
 
 # --- a failed fetch warns and judges from the last fetched origin/main ---
 PG -C "$PH" remote set-url origin "$tmp/no-such-remote.git"

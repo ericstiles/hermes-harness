@@ -12,7 +12,8 @@
 #
 # Output (parseable): PULL=<UP_TO_DATE|SAFE|WAIT|CANNOT>, evidence: lines, next: <command>.
 # Exit: 0 UP_TO_DATE or SAFE, 1 WAIT (a loop from this checkout loads a changed file),
-#       2 CANNOT (not on main, uncommitted changes, diverged, or not a git checkout).
+#       2 CANNOT (not on main, uncommitted changes, an untracked file in the way, diverged, or not
+#       a git checkout), 64 usage error (unknown option).
 set -uo pipefail
 # Resolve symlinks (hermes-* are symlinked onto PATH), then locate the harness.
 _s=${BASH_SOURCE[0]}
@@ -32,5 +33,5 @@ case "${1:-}" in
   "") hh_pull_check "$HARNESS_HOME" 1 ;;
   --no-fetch) hh_pull_check "$HARNESS_HOME" 0 ;;
   --list) hh_loaded_files "$HARNESS_HOME" ;;
-  *) echo "hermes-pull-check: unknown option $1 (see --help)" >&2; exit 2 ;;
+  *) echo "hermes-pull-check: unknown option $1 (see --help)" >&2; exit 64 ;;
 esac

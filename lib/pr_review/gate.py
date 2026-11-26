@@ -14,7 +14,7 @@ from pathlib import Path
 from pr_review.checks import Check
 from pr_review.progress import fmt_duration
 from pr_review.shell import Runner, must
-from pr_review.verdict import file_list
+from pr_review.verdict import CONFLICTED_PREFIX, file_list
 
 GATE_TIMEOUT = 900.0
 log = logging.getLogger("pr_review")
@@ -32,13 +32,14 @@ class RebaseConflict(RuntimeError):
 def _conflicted_files(run: Runner, tree: Path) -> tuple[str, ...]:
     """Unmerged paths of a stopped rebase; () when git cannot say (never raises)."""
     try:
-        result = run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=tree)
+        # -z: raw NUL-separated paths; without it core.quotePath escapes non-ASCII names.
+        result = run(["git", "diff", "--name-only", "-z", "--diff-filter=U"], cwd=tree)
     except Exception as exc:  # the conflict is reported either way; the list is a bonus
         log.warning("rebase conflict: listing conflicted files failed: %s", exc)
         return ()
     if not result.ok:
         return ()
-    return tuple(line for line in result.out.splitlines() if line.strip())
+    return tuple(name for name in result.out.split("\0") if name)
 
 
 def _conflict_message(files: tuple[str, ...], err: str, out: str) -> str:
@@ -51,7 +52,7 @@ def _conflict_message(files: tuple[str, ...], err: str, out: str) -> str:
     errors = [ln for ln in lines if ln.startswith(("error:", "fatal:"))]
     others = [ln for ln in lines if not ln.startswith(("hint:", "Rebasing ("))]
     first = (errors or others or ["git rebase failed"])[0][:500]
-    return f"Conflicted files: {file_list(files)}\n{first}" if files else first
+    return f"{CONFLICTED_PREFIX}{file_list(files)}\n{first}" if files else first
 
 
 @contextmanager

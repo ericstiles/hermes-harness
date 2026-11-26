@@ -121,3 +121,11 @@ def test_rebase_issue_expected_to_modify_names_files() -> None:
     assert "the rebase names" not in section
     unknown = _arg(fixes.rebase_issue_args("om-1", PR, "error: x", 2), "-d")
     assert "the rebase names" in unknown.split("## Expected to modify", 1)[1].split("##", 1)[0]
+
+
+def test_rebase_issue_caps_the_file_list_at_50() -> None:
+    files = tuple(f"f{i:02}.txt" for i in range(53))
+    body = _arg(fixes.rebase_issue_args("om-1", PR, "error: x", 2, files), "-d")
+    section = body.split("## Expected to modify", 1)[1].split("##", 1)[0]
+    assert "- `f49.txt`" in section and "f50.txt" not in section
+    assert "- and 3 more" in section

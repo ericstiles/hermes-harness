@@ -13,6 +13,8 @@ _FENCE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 FIX_PRIORITIES = ("high", "same")
 PATH_LINE = re.compile(r"^(?P<path>[^:\s]+):(?P<line>\d+):")
 MAX_LISTED_FILES = 50
+# Starts a rebase conflict's message (gate.py) when the conflicted files are known.
+CONFLICTED_PREFIX = "Conflicted files: "
 
 
 @dataclass(frozen=True)
@@ -96,19 +98,27 @@ def with_checks(verdict: Verdict, found: list[Problem]) -> Verdict:
     return replace(verdict, approve=False, problems=verdict.problems + tuple(found))
 
 
+def capped(files: tuple[str, ...]) -> tuple[tuple[str, ...], int]:
+    """The first MAX_LISTED_FILES paths, and how many more there are."""
+    shown = files[:MAX_LISTED_FILES]
+    return shown, len(files) - len(shown)
+
+
 def file_list(files: tuple[str, ...]) -> str:
     """`a, b, c`; past MAX_LISTED_FILES the rest is counted: `... and N more`."""
-    shown = ", ".join(files[:MAX_LISTED_FILES])
-    extra = len(files) - MAX_LISTED_FILES
-    return f"{shown} and {extra} more" if extra > 0 else shown
+    shown, more = capped(files)
+    text = ", ".join(shown)
+    return f"{text} and {more} more" if more else text
 
 
 def rebase_verdict(message: str, files: tuple[str, ...]) -> Verdict:
     """The verdict for a PR that does not rebase onto origin/main (not a code rejection)."""
     title = "Does not rebase cleanly onto main"
-    if files:
+    detail = message
+    if files:  # the title lists them, so the detail does not repeat them
         title += f": conflicts in {file_list(files)}"
-    problem = Problem("", None, title, message)
+        detail = message.removeprefix(f"{CONFLICTED_PREFIX}{file_list(files)}\n")
+    problem = Problem("", None, title, detail)
     return Verdict(
         False, "Rebase onto origin/main failed.", (problem,), rebase_conflict=True,
         conflict_files=files,

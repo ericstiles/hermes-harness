@@ -15,6 +15,7 @@ from pr_review.verdict import (
     DIFF_CHECK,
     GATE_CHECK,
     ISSUE_SECTIONS,
+    MAX_LISTED_FILES,
     Problem,
     Verdict,
     template_text,
@@ -145,9 +146,24 @@ def fix_issue_args(
     ]  # fmt: skip
 
 
-def rebase_issue_args(bead: str, pr: PullRequest, detail: str, priority: int) -> list[str]:
-    """`bd` arguments for a rebase-only fix: the PR's branch conflicts with main."""
+def rebase_issue_args(
+    bead: str, pr: PullRequest, detail: str, priority: int, files: tuple[str, ...] = ()
+) -> list[str]:
+    """`bd` arguments for a rebase-only fix: the PR's branch conflicts with main.
+
+    `files` are the conflicted paths (bead 1cd); unknown (empty), the rebase names them.
+    """
     branch = pr.branch
+    shown = files[:MAX_LISTED_FILES]
+    more = len(files) - len(shown)
+    listed = [f"- `{f}`" for f in shown]
+    if more:
+        listed.append(f"- and {more} more (`git diff --name-only --diff-filter=U`)")
+    modify = (
+        "Only the conflicted files:\n" + "\n".join(listed)
+        if files
+        else "Only the conflicted files the rebase names."
+    )
     body = template_text(ISSUE_SECTIONS, {
         "Goal": f"Rebase PR #{pr.number}'s branch `{branch}` onto origin/main so it can be "
                 "merged again.",
@@ -162,7 +178,7 @@ def rebase_issue_args(bead: str, pr: PullRequest, detail: str, priority: int) ->
         "In scope": "Only resolve the conflicts, keeping the intent of both sides, then "
                     f"`git push --force-with-lease origin {branch}` (the only case where a "
                     "force-push is allowed, and only to this branch).",
-        "Expected to modify": "Only the conflicted files the rebase names.",
+        "Expected to modify": modify,
         "Out of scope / Forbidden": "Anything else, the PR title or its "
                                     f"`Bead: {bead}` line. Do NOT open a new PR.",
         "Base branch": f"`{branch}` (existing), rebased onto `origin/main`.",

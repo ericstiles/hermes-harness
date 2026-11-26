@@ -179,3 +179,97 @@ def test_failed_worktree_add_raises_and_removes_the_temp_dir(repo: Path, tmpdir_
         pass  # pragma: no cover
     assert len(_worktrees(repo)) == 1
     assert list(tmpdir_root.iterdir()) == []
+
+
+# --- bead 1cd: a rebase conflict names the conflicted files ---
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def _commit(repo: Path, files: dict[str, str], msg: str) -> None:
+    for name, text in files.items():
+        (repo / name).write_text(text)
+    _git(repo, "add", *files)
+    _git(repo, "commit", "-q", "-m", msg)
+
+
+@pytest.fixture
+def two_file_conflict(repo: Path) -> Path:
+    """Branch `topic` and origin/main both change a.txt and b.txt differently."""
+    _commit(repo, {"b.txt": "b\n"}, "b")
+    _git(repo, "branch", "topic")
+    _commit(repo, {"a.txt": "main a\n", "b.txt": "main b\n"}, "main side")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(repo, "switch", "-q", "topic")
+    _commit(repo, {"a.txt": "topic a\n", "b.txt": "topic b\n"}, "topic side")
+    _git(repo, "switch", "-q", "main")
+    return repo
+
+
+def _conflict(repo: Path, run: object = real_run) -> gate.RebaseConflict:
+    with (
+        pytest.raises(gate.RebaseConflict) as caught,
+        gate.checkout(run, repo, "topic", rebase_onto_main=True),  # type: ignore[arg-type]
+    ):
+        pass  # pragma: no cover
+    return caught.value
+
+
+def test_rebase_conflict_lists_conflicted_files(two_file_conflict: Path, tmpdir_root: Path) -> None:
+    exc = _conflict(two_file_conflict)
+    assert exc.files == ("a.txt", "b.txt")
+    assert len(_worktrees(two_file_conflict)) == 1  # still cleaned up
+    assert list(tmpdir_root.iterdir()) == []
+
+
+def test_rebase_conflict_message_has_no_hint_lines(
+    two_file_conflict: Path, tmpdir_root: Path
+) -> None:
+    text = str(_conflict(two_file_conflict))
+    assert text.startswith("Conflicted files: a.txt, b.txt\n")
+    assert "hint:" not in text
+    assert text.splitlines()[1].startswith("error: could not apply")  # git's first error line
+    assert len(text.splitlines()) == 2
+
+
+def test_rebase_conflict_falls_back_to_git_error_when_file_query_fails(
+    two_file_conflict: Path, tmpdir_root: Path
+) -> None:
+    def no_diff(cmd: Sequence[str], cwd: Path | None = None, env: object = None,
+                timeout: float | None = None) -> Result:  # fmt: skip
+        if cmd[:2] == ["git", "diff"]:
+            return Result(128, "", "fatal: boom\n")
+        return real_run(cmd, cwd=cwd, timeout=timeout)
+
+    exc = _conflict(two_file_conflict, no_diff)
+    assert exc.files == ()
+    assert str(exc).startswith("error: could not apply")
+    assert "hint:" not in str(exc)
+
+
+def test_rebase_conflict_query_that_raises_never_crashes(tmpdir_root: Path) -> None:
+    def raising(cmd: Sequence[str], cwd: Path | None = None, env: object = None,
+                timeout: float | None = None) -> Result:  # fmt: skip
+        if cmd[:3] == ["git", "worktree", "add"]:
+            Path(cmd[-2]).mkdir(parents=True)
+        if cmd[:2] == ["git", "rebase"] and len(cmd) == 3 and cmd[2] == "origin/main":
+            return Result(1, "", "error: could not apply 1234... x\nhint: resolve\n")
+        if cmd[:2] == ["git", "diff"]:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return Result(0, "", "")
+
+    with (
+        pytest.raises(gate.RebaseConflict, match=r"^error: could not apply 1234\.\.\. x$"),
+        gate.checkout(raising, Path("/repo"), "ref", rebase_onto_main=True),
+    ):
+        pass  # pragma: no cover
+
+
+def test_conflict_file_list_is_capped_at_50() -> None:
+    files = tuple(f"f{i:02}.txt" for i in range(53))
+    text = gate.file_list(files)
+    assert text.startswith("f00.txt, f01.txt") and text.endswith("f49.txt and 3 more")
+    assert "f50.txt" not in text
+    assert gate.file_list(("a.txt",)) == "a.txt"

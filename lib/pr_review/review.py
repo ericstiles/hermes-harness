@@ -24,6 +24,7 @@ from pr_review.verdict import (
     Verdict,
     debt_issue_args,
     parse_verdict,
+    rebase_verdict,
     review_comment,
     with_checks,
 )
@@ -170,8 +171,7 @@ def _verdict(ctx: Context, pr: PullRequest, bead: str, ref: str) -> Verdict:
             return verdict
     except RebaseConflict as exc:
         log.info("%s: does not rebase onto origin/main", tag)
-        problem = Problem("", None, "Does not rebase cleanly onto main", str(exc))
-        return Verdict(False, "Rebase onto origin/main failed.", (problem,), rebase_conflict=True)
+        return rebase_verdict(str(exc), exc.files)
 
 
 def _open(rows: list[dict[str, object]]) -> list[str]:
@@ -229,7 +229,9 @@ def _send_rebase(
     if not ctx.dry_run:
         ctx.github.post_review(pr, review_comment(verdict, pr.head_sha), approve=False)
         detail = verdict.problems[0].detail if verdict.problems else ""
-        fix = ctx.beads.create(fixes.rebase_issue_args(bead, pr, detail, priority))
+        fix = ctx.beads.create(
+            fixes.rebase_issue_args(bead, pr, detail, priority, verdict.conflict_files)
+        )
         ctx.beads.note(bead, f"PR #{pr.number} conflicts with main; rebase-fix {fix}")
         ctx.beads.push()
     return "rebase-needed"

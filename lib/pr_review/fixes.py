@@ -15,9 +15,9 @@ from pr_review.verdict import (
     DIFF_CHECK,
     GATE_CHECK,
     ISSUE_SECTIONS,
-    MAX_LISTED_FILES,
     Problem,
     Verdict,
+    capped,
     template_text,
 )
 
@@ -154,8 +154,7 @@ def rebase_issue_args(
     `files` are the conflicted paths (bead 1cd); unknown (empty), the rebase names them.
     """
     branch = pr.branch
-    shown = files[:MAX_LISTED_FILES]
-    more = len(files) - len(shown)
+    shown, more = capped(files)
     listed = [f"- `{f}`" for f in shown]
     if more:
         listed.append(f"- and {more} more (`git diff --name-only --diff-filter=U`)")

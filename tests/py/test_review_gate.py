@@ -273,3 +273,16 @@ def test_conflict_file_list_is_capped_at_50() -> None:
     assert text.startswith("f00.txt, f01.txt") and text.endswith("f49.txt and 3 more")
     assert "f50.txt" not in text
     assert gate.file_list(("a.txt",)) == "a.txt"
+
+
+def test_conflicted_non_ascii_path_is_not_quoted(repo: Path, tmpdir_root: Path) -> None:
+    # Bead i3y: core.quotePath made `git diff --name-only` return "\303\244.txt" in quotes.
+    name = "ä b.txt"
+    _commit(repo, {name: "base\n"}, "base")
+    _git(repo, "branch", "topic")
+    _commit(repo, {name: "main\n"}, "main side")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(repo, "switch", "-q", "topic")
+    _commit(repo, {name: "topic\n"}, "topic side")
+    _git(repo, "switch", "-q", "main")
+    assert _conflict(repo).files == (name,)

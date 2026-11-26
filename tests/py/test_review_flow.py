@@ -323,6 +323,26 @@ def test_verdict_turns_a_rebase_failure_into_a_conflict_verdict(
     assert "CONFLICT (content): a.py" in result.problems[0].detail
 
 
+def test_conflicted_files_reach_the_rebase_fix_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Bead i3y: from checkout through _verdict and _send_rebase to the bead hermes-review files.
+    def conflict(*args: object, **kwargs: object) -> object:
+        raise review.RebaseConflict("Conflicted files: a.py, b.py", ("a.py", "b.py"))
+
+    bd = FakeBeads()
+    created: list[list[str]] = []
+    record = bd.create
+    monkeypatch.setattr(bd, "create", lambda args: created.append(args) or record(args))
+    ctx = _ctx(FakeGitHub(), bd)
+    monkeypatch.setattr(ctx, "baseline", dict)
+    monkeypatch.setattr(review, "fetch", lambda run, repo, number: "ref")
+    monkeypatch.setattr(review, "checkout", conflict)
+    assert review.review_pr(ctx, PR) == "rebase-needed"
+    [args] = created
+    body = args[args.index("-d") + 1]
+    section = body.split("## Expected to modify", 1)[1].split("##", 1)[0]
+    assert "- `a.py`" in section and "- `b.py`" in section
+
+
 def test_merge_closes_eligible_epics_before_the_single_push(verdict: list[Verdict]) -> None:
     gh, bd = FakeGitHub(), FakeBeads(eligible=["om-e.1", "om-e"])
     assert review.review_pr(_ctx(gh, bd), PR) == "merged"

@@ -155,3 +155,12 @@ def test_review_comment_has_no_empty_code_span_for_rebase_conflict() -> None:
     assert "- Does not rebase cleanly onto main: conflicts in a.txt, b.txt" in text
     no_files = review_comment(rebase_verdict("error: could not apply", ()), "abc")
     assert "``" not in no_files and "- Does not rebase cleanly onto main: error" in no_files
+
+
+def test_rebase_conflict_comment_lists_each_file_once() -> None:
+    # Bead i3y: the title and the detail both listed the conflicted files in the PR comment.
+    files = ("a.txt", "b.txt")
+    verdict = rebase_verdict("Conflicted files: a.txt, b.txt\nerror: could not apply", files)
+    text = review_comment(verdict, "abc")
+    assert text.count("a.txt") == 1 and text.count("b.txt") == 1
+    assert "conflicts in a.txt, b.txt: error: could not apply" in text

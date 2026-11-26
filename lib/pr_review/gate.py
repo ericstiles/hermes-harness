@@ -14,6 +14,7 @@ from pathlib import Path
 from pr_review.checks import Check
 from pr_review.progress import fmt_duration
 from pr_review.shell import Runner, must
+from pr_review.verdict import file_list
 
 GATE_TIMEOUT = 900.0
 log = logging.getLogger("pr_review")
@@ -21,7 +22,36 @@ GateOutput = dict[str, str]  # check name -> combined output
 
 
 class RebaseConflict(RuntimeError):
-    """The PR does not rebase cleanly onto origin/main."""
+    """The PR does not rebase cleanly onto origin/main; `files` are the conflicted paths."""
+
+    def __init__(self, message: str, files: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.files = files
+
+
+def _conflicted_files(run: Runner, tree: Path) -> tuple[str, ...]:
+    """Unmerged paths of a stopped rebase; () when git cannot say (never raises)."""
+    try:
+        result = run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=tree)
+    except Exception as exc:  # the conflict is reported either way; the list is a bonus
+        log.warning("rebase conflict: listing conflicted files failed: %s", exc)
+        return ()
+    if not result.ok:
+        return ()
+    return tuple(line for line in result.out.splitlines() if line.strip())
+
+
+def _conflict_message(files: tuple[str, ...], err: str, out: str) -> str:
+    """`Conflicted files: ...` (when known), then git's first error line, never `hint:` lines.
+
+    git's stderr starts with a `Rebasing (1/1)` progress line, so an `error:`/`fatal:` line is
+    preferred; failing that, the first line that is not a hint.
+    """
+    lines = [ln.strip() for ln in (err + "\n" + out).splitlines() if ln.strip()]
+    errors = [ln for ln in lines if ln.startswith(("error:", "fatal:"))]
+    others = [ln for ln in lines if not ln.startswith(("hint:", "Rebasing ("))]
+    first = (errors or others or ["git rebase failed"])[0][:500]
+    return f"Conflicted files: {file_list(files)}\n{first}" if files else first
 
 
 @contextmanager
@@ -40,8 +70,9 @@ def checkout(run: Runner, repo: Path, ref: str, rebase_onto_main: bool) -> Itera
         if rebase_onto_main:
             rebased = run(["git", "rebase", "origin/main"], cwd=tree)
             if not rebased.ok:
+                files = _conflicted_files(run, tree)  # before --abort clears them
                 run(["git", "rebase", "--abort"], cwd=tree)
-                raise RebaseConflict(rebased.err.strip()[:500] or rebased.out.strip()[:500])
+                raise RebaseConflict(_conflict_message(files, rebased.err, rebased.out), files)
         yield tree
     finally:
         _remove_checkout(run, repo, parent, tree, added)

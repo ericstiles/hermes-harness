@@ -109,3 +109,15 @@ def test_fix_issue_follows_the_agents_md_issue_template() -> None:
 def test_rebase_issue_follows_the_agents_md_issue_template() -> None:
     args = fixes.rebase_issue_args("om-1", PR, "CONFLICT (content): a.py", priority=2)
     assert_follows_issue_template(args)
+
+
+def test_rebase_issue_expected_to_modify_names_files() -> None:
+    # Bead 1cd: "Expected to modify" lists each conflicted file, not "the files the rebase names".
+    files = ("a.txt", "b.txt")
+    args = fixes.rebase_issue_args("om-1", PR, "Conflicted files: a.txt, b.txt", 2, files)
+    body = _arg(args, "-d")
+    section = body.split("## Expected to modify", 1)[1].split("##", 1)[0]
+    assert "`a.txt`" in section and "`b.txt`" in section
+    assert "the rebase names" not in section
+    unknown = _arg(fixes.rebase_issue_args("om-1", PR, "error: x", 2), "-d")
+    assert "the rebase names" in unknown.split("## Expected to modify", 1)[1].split("##", 1)[0]

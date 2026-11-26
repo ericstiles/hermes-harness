@@ -12,6 +12,7 @@ DEBT_LABEL = "tech-debt"
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 FIX_PRIORITIES = ("high", "same")
 PATH_LINE = re.compile(r"^(?P<path>[^:\s]+):(?P<line>\d+):")
+MAX_LISTED_FILES = 50
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ class Verdict:
     # Notes about other open beads that name a file this PR changes (overlap.py, bead
     # 9cv). Shown in the review comment only: never blocking, never filed or closed.
     related: tuple[str, ...] = ()
+    # The files a rebase conflict stopped on (bead 1cd); named in the rebase-fix issue.
+    conflict_files: tuple[str, ...] = ()
 
     def blocking(self) -> tuple[Problem, ...]:
         """In-scope problems: fixed on the PR's branch before it can merge."""
@@ -93,6 +96,25 @@ def with_checks(verdict: Verdict, found: list[Problem]) -> Verdict:
     return replace(verdict, approve=False, problems=verdict.problems + tuple(found))
 
 
+def file_list(files: tuple[str, ...]) -> str:
+    """`a, b, c`; past MAX_LISTED_FILES the rest is counted: `... and N more`."""
+    shown = ", ".join(files[:MAX_LISTED_FILES])
+    extra = len(files) - MAX_LISTED_FILES
+    return f"{shown} and {extra} more" if extra > 0 else shown
+
+
+def rebase_verdict(message: str, files: tuple[str, ...]) -> Verdict:
+    """The verdict for a PR that does not rebase onto origin/main (not a code rejection)."""
+    title = "Does not rebase cleanly onto main"
+    if files:
+        title += f": conflicts in {file_list(files)}"
+    problem = Problem("", None, title, message)
+    return Verdict(
+        False, "Rebase onto origin/main failed.", (problem,), rebase_conflict=True,
+        conflict_files=files,
+    )  # fmt: skip
+
+
 def review_comment(verdict: Verdict, head_sha: str) -> str:
     """Markdown review comment.
 
@@ -109,7 +131,8 @@ def review_comment(verdict: Verdict, head_sha: str) -> str:
         for p in verdict.problems:
             suffix = f": {p.detail}" if p.detail else ""
             scope = "" if p.in_scope else " _(outside this PR's scope: filed as tech debt)_"
-            lines.append(f"- `{p.location()}` {p.title}{suffix}{scope}")
+            where = f"`{p.location()}` " if p.location() else ""
+            lines.append(f"- {where}{p.title}{suffix}{scope}")
     if verdict.related:
         lines += [
             "",

@@ -145,7 +145,8 @@ def test_checkout_aborts_on_rebase_conflict_and_removes_worktree(
         gate.checkout(fake, tmp_path, "ref", rebase_onto_main=True),
     ):
         pass
-    assert [c[0][1] for c in fake.calls] == ["worktree", "rebase", "rebase", "worktree"]
+    # the conflicted files are listed (bead 1cd) before --abort clears them
+    assert [c[0][1] for c in fake.calls] == ["worktree", "rebase", "diff", "rebase", "worktree"]
     assert fake.calls[-1][0][2] == "remove"
 
 

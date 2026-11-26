@@ -10,6 +10,7 @@ from pr_review.verdict import (
     Verdict,
     debt_issue_args,
     parse_verdict,
+    rebase_verdict,
     review_comment,
     with_checks,
 )
@@ -141,3 +142,16 @@ def test_only_out_of_scope_problems_do_not_block_approval() -> None:
 def test_gate_problems_are_in_scope_and_block() -> None:
     verdict = with_checks(Verdict(True, "ok", ()), [Problem("t.py", 1, "test fails", "")])
     assert verdict.approve is False and verdict.blocking() == verdict.problems
+
+
+def test_review_comment_has_no_empty_code_span_for_rebase_conflict() -> None:
+    # Bead 1cd: the rebase problem has no file:line, so its location span was rendered as ``.
+    message = "Conflicted files: a.txt, b.txt\nerror: could not apply"
+    verdict = rebase_verdict(message, ("a.txt", "b.txt"))
+    assert verdict.rebase_conflict and not verdict.approve
+    assert verdict.conflict_files == ("a.txt", "b.txt")
+    text = review_comment(verdict, "abc")
+    assert "``" not in text
+    assert "- Does not rebase cleanly onto main: conflicts in a.txt, b.txt" in text
+    no_files = review_comment(rebase_verdict("error: could not apply", ()), "abc")
+    assert "``" not in no_files and "- Does not rebase cleanly onto main: error" in no_files

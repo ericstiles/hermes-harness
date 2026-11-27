@@ -13,6 +13,7 @@ URL = "https://github.com/o/r/pull/7"
 BODY = "Did the thing.\n\nBead: om-1\nHermes-Session: 20261119_101500_abc123\n"
 PR = PullRequest(7, "fix(om-1): thing", BODY, "bd/om-1", "sha7", URL)
 PROBLEMS = (Problem("a.py", 3, "Guard removed", "Restore _ensure_outside"),)
+START = "git fetch origin && git switch bd/om-1 && git pull --ff-only origin bd/om-1"
 
 
 def _arg(args: list[str], flag: str) -> str:
@@ -46,6 +47,9 @@ def test_fix_issue_names_the_pr_branch_session_and_checklist() -> None:
     assert "--acceptance" in args and args[-1] == "--silent"
     # an explicit destination: a local branch that tracks main must never push to main
     assert "git push origin bd/om-1:refs/heads/bd/om-1" in _arg(args, "--design")
+    # onto the existing branch without resetting it: unpushed commits survive
+    assert START in body and "checkout -B" not in body
+    assert "mark this issue blocked" in _arg(args, "--design")
 
 
 def test_fix_title_matches_only_its_own_pr() -> None:
@@ -70,7 +74,10 @@ def test_rebase_issue_asks_for_a_rebase_only_with_force_with_lease() -> None:
     for text in (URL, "git rebase origin/main", push,
                  "CONFLICT (content): a.py", "Do NOT open a new PR"):  # fmt: skip
         assert text in body
-    assert push in _arg(args, "--design")
+    design = _arg(args, "--design")
+    assert push in design and START in design and START in body
+    assert "checkout -B" not in body + design
+    assert "diverged" in design
 
 
 def test_rebase_issue_title_is_found_as_a_fix_for_its_pr() -> None:

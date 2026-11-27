@@ -94,6 +94,6 @@ say "$out" | grep -q '^ACTION=AUTO_RELAUNCH$' && say "$out" | grep -q -- '--reas
 # --- template: the claim is synced at once, and a WIP branch is continued, not restarted ---
 T="$ROOT/templates/AGENTS_WORKFLOW.md"
 grep -q 'claim --json`, then `bd dolt push`' "$T" && ok "template: push beads right after the claim" || bad "template: claim push" "missing"
-grep -q 'WIP:' "$T" && grep -q 'git checkout -B bd/<id> origin/bd/<id>' "$T" \
+grep -q 'WIP:' "$T" && grep -qF 'git switch bd/<id>' "$T" && grep -qF 'git pull --ff-only origin bd/<id>' "$T" \
   && ok "template: continue from a WIP branch and its WIP note" || bad "template: WIP rule" "missing"
 rm -rf "$W/logs"

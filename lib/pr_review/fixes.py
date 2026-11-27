@@ -74,6 +74,17 @@ def session_id(body: str) -> str | None:
     return found.group(1) if found else None
 
 
+START_FAILED = (
+    "If `git switch` or the pull fails (the copies diverged), do not commit, reset or push: "
+    "mark this issue blocked with the git error, as AGENTS.md says."
+)
+
+
+def start_command(branch: str) -> str:
+    """Get onto a PR's existing branch without resetting it: unpushed commits survive."""
+    return f"git fetch origin && git switch {branch} && git pull --ff-only origin {branch}"
+
+
 def fix_priority(wanted: str, ticket_priority: int) -> int:
     """'high' -> P1 (never lowers a P0 ticket); 'same' -> the ticket's own priority."""
     return min(HIGH_PRIORITY, ticket_priority) if wanted == "high" else ticket_priority
@@ -115,8 +126,7 @@ def fix_issue_args(
         "Out of scope / Forbidden": "Anything else in the PR, the PR title or its "
                                     f"`Bead: {bead}` line. Do NOT open a new PR. Do NOT "
                                     "force-push.",
-        "Base branch": f"`{branch}`: `git fetch origin && git checkout -B {branch} "
-                       f"origin/{branch}`",
+        "Base branch": f"`{branch}`: `{start_command(branch)}` (never reset it)",
         "Tests first": "For each bug in the checklist, a test that FAILS on the branch for that "
                        "reason, then the fix. Name the tests and paste the failing output in "
                        "a PR comment.",
@@ -129,7 +139,7 @@ def fix_issue_args(
                     f"this issue or {bead}: the reviewer closes both when it merges.",
         "Invariants": f"PR #{pr.number} keeps its title and `Bead: {bead}` line; existing "
                       "tests keep passing.",
-        "Edge cases": "N/A: the checklist items are the cases.",
+        "Edge cases": f"The checklist items are the cases. {START_FAILED}",
         "Produces for downstream": f"N/A: the reviewer reviews PR #{pr.number} again.",
     })  # fmt: skip
     acceptance = "\n".join((
@@ -173,8 +183,8 @@ def rebase_issue_args(
         "Current state": f"- PR: #{pr.number} {pr.url}\n- Branch: `{branch}` (existing)\n"
                          f"- Original ticket: {bead}\n\nThe rebase stopped with:\n"
                          f"```\n{detail.strip()[:2000]}\n```",
-        "Repro": f"`git fetch origin && git checkout -B {branch} origin/{branch} && "
-                 "git rebase origin/main`\n**Expected:** a clean rebase.\n"
+        "Repro": f"`{start_command(branch)} && git rebase origin/main`\n"
+                 "**Expected:** a clean rebase.\n"
                  "**Actual:** the conflict above.",
         "In scope": "Only resolve the conflicts, keeping the intent of both sides, then "
                     f"`{force_push}` (the only case where a "
@@ -187,7 +197,7 @@ def rebase_issue_args(
                        "pass after it.",
     })  # fmt: skip
     design = template_text(DESIGN_SECTIONS, {
-        "Approach": f"1. `git fetch origin && git checkout -B {branch} origin/{branch}`\n"
+        "Approach": f"1. `{start_command(branch)}`\n"
                     "2. `git rebase origin/main`; resolve each conflict, `git add`, "
                     "`git rebase --continue`.\n"
                     "3. Run the tests and lint.\n"
@@ -197,7 +207,7 @@ def rebase_issue_args(
                     f"this issue or {bead}: the reviewer closes both when it merges.",
         "Invariants": "Both sides' intent is kept; existing tests keep passing.",
         "Edge cases": "A conflict that needs more than a mechanical rebase: mark this issue "
-                      "blocked and say why, as AGENTS.md says for a blocker.",
+                      f"blocked and say why, as AGENTS.md says for a blocker. {START_FAILED}",
         "Produces for downstream": f"N/A: the reviewer reviews PR #{pr.number} again.",
     })  # fmt: skip
     acceptance = "\n".join((

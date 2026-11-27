@@ -85,14 +85,16 @@ overrides the global "do not commit or push" default for this workflow only.
      claim at once), then `bd show <id>`. If the issue has the label
      `review-fix`, follow "Review-fix issues" below instead of steps 3-4.
   3. `git fetch origin`. If the issue's notes have a `WIP:` line (an earlier run
-     ran out of time or crashed and saved its work), read it first. Then take the
-     first case that fits:
-     - A local `bd/<id>` with no `origin/bd/<id>`, or with commits that
-       `git log origin/bd/<id>..bd/<id>` lists: `git switch bd/<id>`.
-     - Else `origin/bd/<id>` exists: continue on it:
-       `git checkout -B bd/<id> origin/bd/<id>`.
-     - Neither: create it untracked (a branch that tracks `main` can push to
-       `main`): `git switch --no-track -c bd/<id> origin/main`.
+     ran out of time or crashed and saved its work), read it first. Then:
+     - `bd/<id>` exists, in this clone or as `origin/bd/<id>`: continue on it
+       with `git switch bd/<id>`, then, if `origin/bd/<id>` exists,
+       `git pull --ff-only origin bd/<id>`. Never reset it: it may hold commits
+       that were never pushed. If either command fails (for example the two
+       copies have diverged), do not commit, reset or push: run
+       `bd update <id> --status blocked --append-notes "<the git error>"`,
+       print `RUN_BLOCKED`, and stop.
+     - It exists in neither place: create it untracked (a branch that tracks
+       `main` can push to `main`): `git switch --no-track -c bd/<id> origin/main`.
 
      Implement, run tests and lint.
      At each milestone (tests written, tests pass) run
@@ -151,8 +153,13 @@ overrides the global "do not commit or push" default for this workflow only.
 - **Review-fix issues** (label `review-fix`, created by `hermes-review` when it
   rejects a PR). The issue names the PR number `N`, the branch `bd/<T>` and the
   original issue `T`.
-  1. `git fetch origin`, then check out the EXISTING branch:
-     `git checkout -B bd/<T> origin/bd/<T>`. Never branch from main.
+  1. Check out the EXISTING branch without resetting it:
+     `git fetch origin && git switch bd/<T> && git pull --ff-only origin bd/<T>`
+     (this creates the branch if the clone lacks it, updates an older copy and
+     keeps commits that were never pushed). Never branch from main. If it fails
+     (for example the two copies have diverged), do not commit, reset or push:
+     run `bd update <F> --status blocked --append-notes "<the git error>"`,
+     print `RUN_BLOCKED`, and stop.
   2. Read the review: `gh pr view <N> --comments` and the issue's checklist.
   3. If a point can only be fixed by fixing what another open bead B describes
      (`bd list` / `bd search`; e.g. a coverage gap caused by B's bug), fix B

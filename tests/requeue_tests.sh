@@ -355,7 +355,8 @@ for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
   [ -z "$loose" ] && [ "$(grep -cF 'git push origin bd/<T>:refs/heads/bd/<T>' "$ROOT/$doc")" -ge 3 ] \
     && grep -qF 'git push --force-with-lease origin bd/<T>:refs/heads/bd/<T>' "$ROOT/$doc" \
     && ok "workflow: $doc: every bd push names its destination" || bad "workflow: $doc push destinations" "$loose"
-  grep -qF '`git switch bd/<id>`' "$ROOT/$doc" && grep -qF 'git log origin/bd/<id>..bd/<id>' "$ROOT/$doc" \
+  grep -qF 'git switch bd/<id>' "$ROOT/$doc" && grep -qF 'git pull --ff-only origin bd/<id>' "$ROOT/$doc" \
+    && ! grep -q 'checkout -B bd/' "$ROOT/$doc" && [ "$(grep -cF 'do not commit, reset or push' "$ROOT/$doc")" -ge 2 ] \
     && ok "workflow: $doc: a branch already in the clone is continued, not recreated" || bad "workflow: $doc local branch" "missing"
   grep -qF 'do not apply to these runs' "$ROOT/$doc" \
     && ok "workflow: $doc: the interactive git steps do not apply to unattended runs" || bad "workflow: $doc unattended" "missing"
@@ -395,5 +396,40 @@ G -C "$tmp/c" fetch -q origin; ! G -C "$tmp/c" checkout --detach origin/main && 
   && prompt 1 | grep -qF 'never discard uncommitted changes' \
   && ok "run prompt: uncommitted changes are kept, and the prompt says never to discard them" \
   || bad "run prompt: dirty clone" "$(cat "$tmp/c/AGENTS.md")"
+
+# --- review-fix start (owner's decision on PR #47): get onto the PR branch without ever dropping a
+# commit. Runs the documented command from every state the shared clone can hold the branch in.
+start='git fetch origin && git switch bd/<T> && git pull --ff-only origin bd/<T>'
+for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
+  cmd=$(grep -oF -m 1 "$start" "$ROOT/$doc" | head -n 1); cmd=${cmd//<T>/om-t}
+  rm -rf "$tmp/o.git" "$tmp/c" "$tmp/pr"
+  G init -q --bare -b main "$tmp/o.git"; G clone -q "$tmp/o.git" "$tmp/pr"; echo a > "$tmp/pr/a"
+  G -C "$tmp/pr" add -A; G -C "$tmp/pr" commit -q -m a; G -C "$tmp/pr" push -q origin HEAD:main
+  G -C "$tmp/pr" switch -q -c bd/om-t
+  pushed() { echo "$1" > "$tmp/pr/f"; G -C "$tmp/pr" add f; G -C "$tmp/pr" commit -q -m "$1"; G -C "$tmp/pr" push -q origin bd/om-t:refs/heads/bd/om-t; }
+  pushed pr1; G clone -q "$tmp/o.git" "$tmp/c"
+  run_start() { # the documented command; fails when any part fails
+    local part
+    [ -n "$cmd" ] || return 1
+    G -C "$tmp/c" checkout -q --detach
+    while IFS= read -r part; do
+      # shellcheck disable=SC2086  # each documented command, split into its arguments
+      G -C "$tmp/c" ${part#git } || return 1
+    done <<EOF
+${cmd// && /
+}
+EOF
+  }
+  at() { git -C "$tmp/c" log -1 --format=%s bd/om-t 2>/dev/null; }
+  states=""
+  run_start && [ "$(at)" = pr1 ] || states="$states missing-branch($(at))"
+  pushed pr2; run_start && [ "$(at)" = pr2 ] || states="$states behind($(at))"
+  echo mine > "$tmp/c/g"; G -C "$tmp/c" add g; G -C "$tmp/c" commit -q -m unpushed
+  run_start && [ "$(at)" = unpushed ] || states="$states ahead($(at))"
+  pushed pr3; ! run_start && [ "$(at)" = unpushed ] || states="$states diverged($(at))"
+  [ -z "$states" ] && ok "workflow: $doc: the review-fix start creates, updates and never drops commits" \
+    || bad "workflow: $doc review-fix start" "cmd='$cmd' wrong:$states"
+done
+unset -f pushed run_start at
 
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

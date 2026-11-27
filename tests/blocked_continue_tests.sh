@@ -71,7 +71,7 @@ two; blocked_run 1 om-a "$WHY"
 STUB_SNAPSHOT_FAIL=1 hrun 1
 [ "$(field om-a status)" = blocked ] && [ "$(field om-a assignee)" = hermes ] && [ "$(field om-a notes)" = "$WHY" ] \
   && say "$out" | grep -qxF "PARKED: om-a ($WHY)" && ! grep -q '^bd update om-a --if' "$STUB_LOG" \
-  && say "$out" | grep -q '^PARK: could not read the notes from before the run' \
+  && say "$out" | grep -q '^PARK: no record of om-a from before the run' \
   && ok "blocked: without the earlier notes the agent's park is accepted, nothing is written, and it says so" \
   || bad "blocked: no snapshot" "$(say "$out" | grep PARK) $(field om-a notes)"
 # the pushed WIP branch is named; a review fix's branch is its ticket's
@@ -142,6 +142,34 @@ hrun 2
   && say "$out" | grep -q '^PARK: om-a was assigned to alice before this run: the assignee is kept' \
   && say "$out" | grep -qxF "PARKED: om-a ($WHY)" \
   && ok "blocked: an assignee from before the run is never removed" || bad "blocked: earlier assignee" "chats=$(chats) $(field om-a assignee) $(say "$out" | grep PARK)"
+
+# a claim by short id: everything is checked and written under the real id
+reset_db; bead om-a 2 in_progress "" '"assignee": "alice"'; bead om-b 2 open; blocked_run 1 a
+hrun 3; stops "someone else's issue claimed by short id" 'om-a was in_progress before this run'
+[ "$(field om-a status)" = in_progress ] && [ "$(field om-a assignee)" = alice ] && [ -z "$(field om-a notes)" ] \
+  && ok "not parked: a short id does not get past the claim guard" || bad "not parked: short id" "$(field om-a status) $(field om-a assignee)"
+two; blocked_run 1 a; agent_run 2 om-b NO_READY_WORK
+STUB_BRANCHES=bd/om-a hrun 2
+[ "$(chats)" = 2 ] && parked om-a && say "$out" | grep -q '^PARKED: om-a (.*) | WIP branch bd/om-a is on origin$' \
+  && grep -qx 'PARKED_ISSUES=om-a' "$(last_log)" && grep -q '^bd update om-a --if-status ' "$STUB_LOG" \
+  && ok "blocked: a short id is parked, logged and listed under the real id" \
+  || bad "blocked: short id" "chats=$(chats) $(say "$out" | grep -E 'PARK')"
+# an issue the snapshot does not have (it appeared during the run) may be someone else's
+two; agent_run 1 om-new RUN_BLOCKED
+printf 'echo '\''{"id":"om-new","priority":2,"status":"in_progress","assignee":"alice","blocks":[]}'\'' > "$STUB_DB/om-new.json"\n' > "$STUB_PLAN/1.sh"
+hrun 3; stops "an issue the snapshot does not have" 'no record of om-new from before the run'
+[ "$(field om-new status)" = in_progress ] && [ "$(field om-new assignee)" = alice ] \
+  && ok "not parked: an issue new to the snapshot is not touched" || bad "not parked: new issue" "$(field om-new status) $(field om-new assignee)"
+# the pull before the run failed and a later one worked: the snapshot may be out of date
+two; blocked_run 1 om-a
+STUB_PULL_FAIL_AT=1 hrun 3; stops "a snapshot taken after a failed pull" 'no record of om-a from before the run'
+[ "$(field om-a status)" = in_progress ] && say "$out" | grep -q '^PARK: the pull before the run failed' \
+  && ok "not parked: a stale snapshot is not trusted, and the log says why" || bad "not parked: stale" "$(field om-a status) $(say "$out" | grep PARK)"
+# no pull ever works (no remote): the local snapshot is as good as the local beads
+two; blocked_run 1 om-a; agent_run 2 om-b NO_READY_WORK
+STUB_PULL_FAIL=1 hrun 2
+[ "$(chats)" = 2 ] && parked om-a && ok "blocked: without a working pull the loop still parks" \
+  || bad "blocked: no remote" "chats=$(chats) $(say "$out" | grep PARK)"
 
 # --- test_blocked_breaker_stops_after_two_in_a_row ---
 two; bead om-c 3 open; blocked_run 1 om-a "$WHY"; blocked_run 2 om-b "$WHY"

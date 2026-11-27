@@ -2,16 +2,18 @@
 """parked: after a run ends RUN_BLOCKED, make sure its issue is parked (bead yiv).
 
     parked.py snapshot FILE         # before a run: every issue's status, assignee, notes -> FILE
-    parked.py park ID FILE LOGREF   # after RUN_BLOCKED -> "LOG <explanation>" lines, CHANGED once
-                                    #   beads were written, BRANCH <bd/...>, then
-                                    #   PARKED <the reason> | NOT_PARKED <why>
+    parked.py park ID FILE LOGREF   # after RUN_BLOCKED -> ID <full id>, "LOG <explanation>"
+                                    #   lines, CHANGED once beads were written, BRANCH <bd/...>,
+                                    #   then PARKED <the reason> | NOT_PARKED <why>
 
 Parked means: status blocked, nobody assigned, and a note line starting `BLOCKED:` that this run
 added (told apart from older ones by the snapshot). Whatever the agent left undone is done here.
 
+A claim may name a short id, so the issue is shown first and everything else uses its real id.
 Only this run's issue is changed. Nothing is written when the issue was not open before the run, is
 now closed or deferred, is open but assigned (the claim did not take), or when the snapshot is
-missing; an assignee it already had before the run is never removed. Writes are at most two
+missing or does not have it. An assignee it had before the run is kept when the run left the issue
+blocked; one that is in_progress (this run's claim) is released. Writes are at most two
 `bd update`s, status first (bd refuses to reassign another actor's in_progress issue), each pinned
 with --if-status/--if-assignee to what was just read. The caller pushes. Each `bd` call is under
 HERMES_BEADS_TIMEOUT (15s). Exits 0. Python 3.9+, stdlib only.
@@ -67,15 +69,13 @@ def snapshot(path: str) -> None:
 
 
 def load_before(path: str, bead_id: str) -> Before | None:
-    """The issue before the run; None when that is unknown. An issue created since is empty."""
+    """The issue before the run; None when the snapshot is missing or does not have it."""
     try:
         with open(path, encoding="utf-8") as source:
             data = json.load(source)
-        found = data.get(bead_id)
-        if found is None:
-            return Before("open", "", "")
+        found = data[bead_id]
         return Before(found["status"], found["assignee"], found["notes"])
-    except (OSError, ValueError, AttributeError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
@@ -143,18 +143,18 @@ def parked_lines(bead_id: str, data: dict, reason: str) -> list[str]:
 
 
 def park_unknown(bead_id: str, data: dict) -> list[str]:
-    """Without the snapshot nothing is written: only an already parked issue is accepted."""
+    """Without an earlier record nothing is written: only an already parked issue is accepted."""
     status = str(data.get("status"))
     reason = blocked_lines(str(data.get("notes") or "").splitlines())
     if status == "blocked" and reason:
         return [
-            "LOG could not read the notes from before the run: taking the issue's last BLOCKED: "
-            "note as this run's, and changing nothing",
+            f"LOG no record of {bead_id} from before the run: taking its last BLOCKED: note as "
+            "this run's, and changing nothing",
             *parked_lines(bead_id, data, reason),
         ]
     return [
-        f"NOT_PARKED could not read the notes from before the run and {bead_id} is {status} "
-        "without being parked, so nothing is changed"
+        f"NOT_PARKED no record of {bead_id} from before the run, and it is {status} without "
+        "being parked, so nothing is changed"
     ]
 
 
@@ -169,18 +169,15 @@ def updates(status: str, assignee: str, release: bool, note: str) -> list[tuple[
     return [*first, *([("--if-status", "blocked", *pin, *rest)] if rest else [])]
 
 
-def park(bead_id: str, before: Before | None, logref: str) -> list[str]:
-    """The output lines of `parked.py park`."""
-    data = show(bead_id)
-    if before is None:
-        return park_unknown(bead_id, data)
+def park_known(bead_id: str, data: dict, before: Before, logref: str) -> list[str]:
+    """Park an issue whose state before the run is on record."""
     status = str(data.get("status"))
     assignee = str(data.get("assignee") or "")
     notes = str(data.get("notes") or "")
     why_not = refusal(bead_id, before, status, assignee)
     if why_not:
         return [f"NOT_PARKED {why_not}"]
-    # an assignee from before the run is kept unless this run's claim made the issue in_progress
+    # an assignee from before the run is kept unless the issue is in_progress (this run's claim)
     keep = bool(assignee) and assignee == before.assignee and status == "blocked"
     out = [f"LOG {bead_id} was assigned to {assignee} before this run: the assignee is kept"]
     out = out if keep else []
@@ -207,6 +204,18 @@ def park(bead_id: str, before: Before | None, logref: str) -> list[str]:
     return [*out, *written, *parked_lines(bead_id, data, reason or note)]
 
 
+def park(claimed: str, snapshot_path: str, logref: str) -> list[str]:
+    """The output lines of `parked.py park`."""
+    data = show(claimed)
+    bead_id = str(data["id"])  # a claim may use a short id; the snapshot is keyed by the real one
+    before = load_before(snapshot_path, bead_id)
+    if before is None:
+        lines = park_unknown(bead_id, data)
+    else:
+        lines = park_known(bead_id, data, before, logref)
+    return [f"ID {bead_id}", *lines]
+
+
 def main(argv: list[str]) -> str:
     if len(argv) == 2 and argv[0] == "snapshot":
         try:
@@ -217,7 +226,7 @@ def main(argv: list[str]) -> str:
     if len(argv) == 4 and argv[0] == "park":
         bead_id = argv[1]
         try:
-            return "\n".join(park(bead_id, load_before(argv[2], bead_id), argv[3]))
+            return "\n".join(park(bead_id, argv[2], argv[3]))
         except (BeadsError, AttributeError, KeyError, TypeError) as exc:
             return f"NOT_PARKED could not park {bead_id} ({exc})"
     raise SystemExit("usage: parked.py snapshot FILE | park ID FILE LOGREF")

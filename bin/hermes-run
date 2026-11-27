@@ -494,8 +494,14 @@ blocked_check() {
   case $ref in /*) ref=${ref##*/} ;; esac # never a host path in a bead's notes
   id=$(claimed_issue "${claim_log:-$log}")
   [ -n "$id" ] || { loop_say "PARK: the run claimed no issue, so there is nothing to park"; return 0; }
-  bd dolt pull >/dev/null 2>&1 || loop_say "warning: bd dolt pull failed; parking from local beads"
+  if ! bd dolt pull >/dev/null 2>&1; then
+    loop_say "warning: bd dolt pull failed; parking from local beads"
+  elif [ "$pulled" != 1 ]; then # the snapshot may predate what this pull just brought in
+    rm -f "$NOTES_BEFORE"
+    loop_say "PARK: the pull before the run failed, so the notes saved then are not trusted"
+  fi
   hh_park "$id" "$NOTES_BEFORE" "$ref"
+  id=$HH_PARK_ID # the full id, whatever the claim command used
   loop_say_lines "$HH_PARK_LOG"
   if [ "$HH_PARK_CHANGED" = 1 ]; then
     bd dolt push >/dev/null 2>&1 || loop_say "warning: bd dolt push failed (the change to $id is local only)"
@@ -586,7 +592,8 @@ for i in $(seq 1 "$MAX"); do
   fi
   stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
   # Which issue this run works, and why: the requeue chain (35r), else the first ready one (66y).
-  bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; picking from local beads"
+  pulled=1 # 0: the pull failed, so the snapshot below may be out of date
+  bd dolt pull >/dev/null 2>&1 || { pulled=0; echo "warning: bd dolt pull failed; picking from local beads"; }
   [ "$go_on" != 1 ] || hh_notes_snapshot "$NOTES_BEFORE"
   hh_chain_pick; run_pick=$HH_CHAIN_PICK; pick_log=$HH_CHAIN_LOG; iter_prompt=""
   if [ -z "$run_pick" ]; then hh_normal_pick; run_pick=$HH_PICK; add_pick_log "$HH_PICK_LOG"; fi

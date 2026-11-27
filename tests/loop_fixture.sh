@@ -31,6 +31,13 @@ for path in glob.glob(os.path.join(db, "*.json")):
     beads[bead["id"]] = bead
 
 
+# `show` and `update` take a short id (without the prefix) as bd does
+if args[:1] in (["show"], ["update"]) and args[1] not in beads:
+    found = [i for i in beads if i.split("-", 1)[-1] == args[1]]
+    if len(found) == 1:
+        args = [args[0], found[0], *args[2:]]
+
+
 def dep(i, kind):
     b = beads[i]
     return {"id": i, "status": b["status"], "priority": b["priority"], "dependency_type": kind}
@@ -137,7 +144,8 @@ elif args[:2] == ["dolt", "pull"]:
     if str(pulls) == os.environ.get("STUB_CYCLE_AT_PULL"):
         with open(os.path.join(db, "om-b.json"), "w") as f:
             json.dump({**beads["om-b"], "blocks": ["om-a"]}, f)
-    sys.exit(1 if os.environ.get("STUB_PULL_FAIL") == "1" else 0)
+    failing = os.environ.get("STUB_PULL_FAIL") == "1"
+    sys.exit(1 if failing or str(pulls) == os.environ.get("STUB_PULL_FAIL_AT") else 0)
 S
 # chat number N runs $STUB_PLAN/N.sh (what the agent does to beads) if there is one, then prints
 # $STUB_PLAN/N (else a run that opens a PR); the prompt is logged

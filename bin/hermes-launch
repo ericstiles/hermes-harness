@@ -66,10 +66,11 @@ WHAT HAPPENS
          (one local model, so one run at a time); a tests/run_tests.sh run's
          own processes do not count
        - Docker does not answer: the docker command is missing, or 'docker info'
-         fails or takes longer than HERMES_DOCKER_TIMEOUT. It only checks: it
-         never starts colima or Docker. A HERMES_DOCKER_TIMEOUT that is not a
-         duration refuses the launch too. (With the limit at 0, or without a
-         working python3, which runs it, it warns and does not check.)
+         fails or takes longer than HERMES_DOCKER_TIMEOUT. The first line of
+         docker's error is shown. It only checks: it never starts colima or
+         Docker. A HERMES_DOCKER_TIMEOUT that is not a duration refuses the
+         launch too. (With the limit at 0, or without a working python3, which
+         runs it, it warns and does not check.)
   4. Checks the hermes-harness checkout it runs from: fetches origin main (at
      most HERMES_FRESHNESS_TIMEOUT) and prints a warning, then carries on, if
      the checkout is behind origin/main (with the pull command to run), the
@@ -109,7 +110,8 @@ ENVIRONMENT
 EXIT STATUS
   0  started (or --dry-run, or --help)
   1  not started: GITHUB_REPO unknown, no GH_TOKEN, a run is already
-     active, Docker does not answer, or no herdr/tmux
+     active, Docker is missing or does not answer,
+     HERMES_DOCKER_TIMEOUT is not a duration, or no herdr/tmux
   2  bad usage: unknown option, or not inside a git repo
 
 EXAMPLES
@@ -126,38 +128,49 @@ for _a in "$@"; do case "$_a" in -h|--help) usage; exit 0 ;; esac; done
 # Why Docker cannot be used and the fix (bead 5qy), or nothing. hermes-run checks this too, but only
 # after the tab is open. The watchdog bounds it: a wedged VM can hang `docker info`.
 docker_problem() {
-  local limit=${HERMES_DOCKER_TIMEOUT:-15s} rc why fix="start your container runtime (Docker Desktop, OrbStack, ...)"
+  local limit=${HERMES_DOCKER_TIMEOUT:-15s} rc why err="" errfile missing=""
+  local fix="start your container runtime (Docker Desktop, OrbStack, ...)"
   local duration='^[0-9]+(\.[0-9]+)?[smhd]?$' zero='^0+(\.0+)?$' # lib/watchdog.py's forms
-  # A problem with our own setting or tools is never reported as Docker being down.
-  if ! [[ $limit =~ $duration ]]; then
-    printf '%s\n    %s' "HERMES_DOCKER_TIMEOUT='$limit' is not a duration, so Docker cannot be checked." \
-      "Fix: use seconds or a unit, e.g. 15s or 2m (0 skips the check)."
-    return 0
-  fi
   if [[ ${limit%[smhd]} =~ $zero ]]; then
     echo "warning: HERMES_DOCKER_TIMEOUT=$limit: Docker was not checked" >&2
     return 0
   fi
-  command -v docker >/dev/null 2>&1 || {
-    printf '%s\n    %s' "Docker is not installed or not on PATH (docker command not found)." \
-      "Fix: install Docker, or add its folder to PATH."
+  command -v docker >/dev/null 2>&1 ||
+    missing=$(printf '%s\n    %s' "Docker is not installed or not on PATH (docker command not found)." \
+      "Fix: install Docker, or add its folder to PATH.")
+  # A problem with our own setting or tools is never reported as Docker being down.
+  if ! [[ $limit =~ $duration ]]; then
+    [ -z "$missing" ] || printf '%s\n  - ' "$missing" # both are listed, each as its own problem
+    printf '%s\n    %s' "HERMES_DOCKER_TIMEOUT='$limit' is not a duration, so Docker cannot be checked." \
+      "Fix: use seconds or a unit, e.g. 15s or 2m (0 skips the check)."
     return 0
-  }
+  fi
+  [ -z "$missing" ] || { printf '%s' "$missing"; return 0; }
   python3 -c '' >/dev/null 2>&1 || {
     echo "warning: python3 is missing or does not run (it runs the time limit), so Docker was not checked" >&2
     return 0
   }
+  # stderr goes to a file: in $(...), a child of docker that outlives the limit would hold the pipe.
+  errfile=$(mktemp "${TMPDIR:-/tmp}/hermes-docker.XXXXXX" 2>/dev/null) || errfile=""
   python3 "$HARNESS_HOME/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
-    docker info >/dev/null 2>&1; rc=$?
+    docker info >/dev/null 2>"${errfile:-/dev/null}"; rc=$?
+  if [ -n "$errfile" ]; then
+    err=$(grep -m 1 '[^[:space:]]' "$errfile")
+    rm -f "$errfile"
+  fi
   [ "$rc" = 0 ] && return 0
   why="Docker is not answering ('docker info' failed)."
   command -v colima >/dev/null 2>&1 && fix="colima start"
   if [ "$rc" = 124 ]; then
-    why="Docker is not answering ('docker info' gave no answer within $limit)."
-    [ "$fix" = "colima start" ] && fix="colima restart"
+    why="Docker is not answering ('docker info' gave no answer within $limit; if it is only slow, raise HERMES_DOCKER_TIMEOUT)."
+    # `colima start` does nothing to a VM colima already counts as running
+    [ "$fix" = "colima start" ] && fix="colima restart (this stops running containers)"
   fi
+  [ -z "$err" ] || why="$why
+    docker says: $err"
   printf '%s\n    %s' "$why" "Fix: $fix"
 }
+
 hh_repo || exit 2
 TO=""; REASON=manual; ISSUE=unknown; MAX=10; DRY=0; CLEAN=""
 while [ $# -gt 0 ]; do

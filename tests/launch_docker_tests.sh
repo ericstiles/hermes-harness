@@ -88,9 +88,40 @@ for v in 15 2m 1.5s 1h; do
 done
 [ -z "$wrong" ] && ok "launch docker: seconds and unit forms are accepted" || bad "launch docker: good limits" "$wrong"
 unset BROKEN SLOW wrong v
+# --- docker's own words (bead e43): "permission denied" must not read as just "start colima" ---
+DENIED="$tmp/dk-denied"; dkstub "$DENIED" docker \
+  'printf "Client:\n Version: 1\n"; printf "\npermission denied on the docker socket\nsecond detail line\n" >&2; exit 1'
+dk "$DENIED:$COL:$BARE" "$BIN/hermes-launch" --dry-run
+[ $rc -eq 1 ] && say "$out" | grep -q 'docker says: permission denied on the docker socket' \
+  && ! say "$out" | grep -q 'second detail line\|Client:' && say "$out" | grep -q 'Fix: colima start' \
+  && ok "launch docker: the first line of docker's error is shown" || bad "launch docker: docker's words" "rc=$rc $out"
+MUTE="$tmp/dk-mute"; dkstub "$MUTE" docker 'exit 1'
+dk "$MUTE:$BARE" "$BIN/hermes-launch" --dry-run
+[ $rc -eq 1 ] && say "$out" | grep -q 'Docker is not answering' && ! say "$out" | grep -q 'docker says' \
+  && ok "launch docker: a silent failure adds no empty error line" || bad "launch docker: mute" "rc=$rc $out"
+# --- a hang says the limit can be raised, and what the suggested restart costs ---
+dk "$HANG:$COL:$BARE" HERMES_DOCKER_TIMEOUT=1s "$BIN/hermes-launch" --dry-run
+[ $rc -eq 1 ] && say "$out" | grep -q 'raise HERMES_DOCKER_TIMEOUT' \
+  && say "$out" | grep -q 'Fix: colima restart (this stops running containers)' \
+  && ok "launch docker: a hang names the time limit and warns that a restart stops containers" \
+  || bad "launch docker: hang wording" "rc=$rc $out"
+# a child of docker that outlives the limit and keeps its stderr open must not hold the launch
+ORPHAN="$tmp/dk-orphan"; dkstub "$ORPHAN" docker "(trap '' TERM; exec sleep 20) & exec sleep 30"
+start=$(date +%s)
+dk "$ORPHAN:$BARE" HERMES_DOCKER_TIMEOUT=1s "$BIN/hermes-launch" --dry-run
+took=$(($(date +%s) - start))
+[ $rc -eq 1 ] && [ $took -lt 15 ] && say "$out" | grep -q 'gave no answer within 1s' \
+  && ok "launch docker: a leftover child of docker does not hold the launch" || bad "launch docker: orphan" "rc=$rc ${took}s $out"
+# --- a bad time limit and no docker command: both are listed (bead a7v) ---
+dk "$BARE" HERMES_DOCKER_TIMEOUT=abc "$BIN/hermes-launch" --dry-run
+[ $rc -eq 1 ] && say "$out" | grep -q '^  - Docker is not installed' \
+  && say "$out" | grep -q "^  - HERMES_DOCKER_TIMEOUT='abc' is not a duration" \
+  && ok "launch docker: a bad time limit and a missing docker are both listed" || bad "launch docker: both" "rc=$rc $out"
+unset DENIED MUTE ORPHAN
 # --- help ---
 out=$("$BIN/hermes-launch" --help 2>&1)
 say "$out" | grep -q 'Docker does not answer' && say "$out" | grep -q 'HERMES_DOCKER_TIMEOUT.*0 skips' \
   && say "$out" | sed -n '/^EXIT STATUS/,/^EXAMPLES/p' | grep -q 'Docker' \
+  && say "$out" | sed -n '/^EXIT STATUS/,/^EXAMPLES/p' | grep -q 'HERMES_DOCKER_TIMEOUT is not a duration' \
   && ok "launch docker: --help lists the check, its time limit and the exit status" || bad "launch docker: help" "$out"
 unset -f dkstub dk untouched; unset BARE DOWN HANG COL UP start took kind

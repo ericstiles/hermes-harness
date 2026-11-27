@@ -101,6 +101,9 @@ only. Interactive sessions keep the Conservative profile.
   `<prefix>-225` and `<prefix>-b8p.25` are different beads. You may only
   append notes to a bead you claimed in this run (the harness blocks others),
   and the harness itself adds a missing `PR: <url>` line to the PR's beads.
+- The git steps in the Beads blocks and in any "Session Completion" section
+  (`git pull --rebase`, a bare `git push`) are for interactive sessions. They
+  do not apply to these runs: use only the git commands in this workflow.
 - Do exactly ONE issue per session:
   1. Pick the issue with exactly this command, and take the FIRST item:
      `bd ready --json --exclude-type epic --sort priority`
@@ -116,10 +119,15 @@ only. Interactive sessions keep the Conservative profile.
      claim at once), then `bd show <id>`. If the issue has the label
      `review-fix`, follow "Review-fix issues" below instead of steps 3-4.
   3. `git fetch origin`. If the issue's notes have a `WIP:` line (an earlier run
-     ran out of time or crashed and saved its work), read it first and, when
-     `origin/bd/<id>` exists, continue on it: `git checkout -B bd/<id> origin/bd/<id>`.
-     Otherwise create it untracked (a branch that tracks `main` can push to
-     `main`): `git switch --no-track -c bd/<id> origin/main`.
+     ran out of time or crashed and saved its work), read it first. Then take the
+     first case that fits:
+     - A local `bd/<id>` with no `origin/bd/<id>`, or with commits that
+       `git log origin/bd/<id>..bd/<id>` lists: `git switch bd/<id>`.
+     - Else `origin/bd/<id>` exists: continue on it:
+       `git checkout -B bd/<id> origin/bd/<id>`.
+     - Neither: create it untracked (a branch that tracks `main` can push to
+       `main`): `git switch --no-track -c bd/<id> origin/main`.
+
      Implement test-first, then
      run the quality gate given in `AGENTS_LOCAL.md`.
      At each milestone (tests written, tests pass) run
@@ -171,7 +179,7 @@ only. Interactive sessions keep the Conservative profile.
      - **Only a human can unblock it** (unclear requirements, missing access, a
        command the sandbox denies): commit WIP to the branch, push it with
        `git push -u origin bd/<id>:refs/heads/bd/<id>` (on a review-fix issue,
-       `git push origin bd/<T>`), run
+       `git push origin bd/<T>:refs/heads/bd/<T>`), run
        `bd update <id> --status blocked --append-notes "<why>"`, and print
        `RUN_BLOCKED`. Stop. Don't guess at requirements.
   6. If `hermes-run` resumes you to say the time limit was reached or Hermes
@@ -193,12 +201,12 @@ only. Interactive sessions keep the Conservative profile.
      claimed by someone else, do not touch it: requeue F behind it (step 5,
      "Another bead must be finished first": `<id>` is F, `<blocker>` is B). In
      place of its step 3, commit and push anything uncommitted to `bd/<T>`, never
-     delete that branch, note `WIP: bd/<T> - <what is done>` on F if you pushed,
+     delete that branch (`git push origin bd/<T>:refs/heads/bd/<T>`), note `WIP: bd/<T> - <what is done>` on F if you pushed,
      and leave `git status --porcelain` empty. Name B and its assignee in the
      REQUEUED note, and stop.
   4. Fix every point. Tests first for each bug, as in the issue sections below.
      Run the quality gate.
-  5. Commit and `git push origin bd/<T>`. Do NOT open a new PR, do NOT
+  5. Commit and `git push origin bd/<T>:refs/heads/bd/<T>`. Do NOT open a new PR, do NOT
      force-push, do NOT touch the PR title or the `Bead: <T>` line.
   6. `bd update <F> --append-notes "PR: <url>"`, then verify with `bd show <F>`
      and `bd show <T>` that both still have their `PR:` line. Do NOT close F or
@@ -210,7 +218,7 @@ only. Interactive sessions keep the Conservative profile.
     `Rebase PR #N onto main (T)`): the PR only conflicts with main. After step 1,
     run `git rebase origin/main`, resolve each conflict keeping the intent of
     both sides, then run the quality gate. Push with
-    `git push --force-with-lease origin bd/<T>`: the ONLY case where a
+    `git push --force-with-lease origin bd/<T>:refs/heads/bd/<T>`: the ONLY case where a
     force-push is allowed, and only to that branch. Change nothing else. Then
     step 6.
 - You ARE allowed and expected to create new beads issues. Do not ask first.

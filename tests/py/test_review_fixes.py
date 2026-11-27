@@ -44,6 +44,8 @@ def test_fix_issue_names_the_pr_branch_session_and_checklist() -> None:
                  "gh pr view 7 --comments", "Do NOT open a new PR"):  # fmt: skip
         assert text in body
     assert "--acceptance" in args and args[-1] == "--silent"
+    # an explicit destination: a local branch that tracks main must never push to main
+    assert "git push origin bd/om-1:refs/heads/bd/om-1" in _arg(args, "--design")
 
 
 def test_fix_title_matches_only_its_own_pr() -> None:
@@ -64,9 +66,11 @@ def test_rebase_issue_asks_for_a_rebase_only_with_force_with_lease() -> None:
     assert labels == [f"{fixes.REVIEW_FIX_LABEL},{fixes.REBASE_LABEL}"]
     assert _arg(args, "-p") == "2"
     body = _arg(args, "-d")
-    for text in (URL, "git rebase origin/main", "git push --force-with-lease origin bd/om-1",
+    push = "git push --force-with-lease origin bd/om-1:refs/heads/bd/om-1"
+    for text in (URL, "git rebase origin/main", push,
                  "CONFLICT (content): a.py", "Do NOT open a new PR"):  # fmt: skip
         assert text in body
+    assert push in _arg(args, "--design")
 
 
 def test_rebase_issue_title_is_found_as_a_fix_for_its_pr() -> None:

@@ -124,7 +124,7 @@ def fix_issue_args(
     design = template_text(DESIGN_SECTIONS, {
         "Approach": f"1. Read the review: `gh pr view {pr.number} --comments`.\n"
                     "2. Tests first for each bug (a failing test, then the fix).\n"
-                    f"3. Commit and `git push origin {branch}`.\n"
+                    f"3. Commit and `git push origin {branch}:refs/heads/{branch}`.\n"
                     f'4. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close '
                     f"this issue or {bead}: the reviewer closes both when it merges.",
         "Invariants": f"PR #{pr.number} keeps its title and `Bead: {bead}` line; existing "
@@ -154,6 +154,8 @@ def rebase_issue_args(
     `files` are the conflicted paths (bead 1cd); unknown (empty), the rebase names them.
     """
     branch = pr.branch
+    # an explicit destination: a local branch that tracks main must never push to main
+    force_push = f"git push --force-with-lease origin {branch}:refs/heads/{branch}"
     shown, more = capped(files)
     listed = [f"- `{f}`" for f in shown]
     if more:
@@ -175,7 +177,7 @@ def rebase_issue_args(
                  "git rebase origin/main`\n**Expected:** a clean rebase.\n"
                  "**Actual:** the conflict above.",
         "In scope": "Only resolve the conflicts, keeping the intent of both sides, then "
-                    f"`git push --force-with-lease origin {branch}` (the only case where a "
+                    f"`{force_push}` (the only case where a "
                     "force-push is allowed, and only to this branch).",
         "Expected to modify": modify,
         "Out of scope / Forbidden": "Anything else, the PR title or its "
@@ -189,7 +191,7 @@ def rebase_issue_args(
                     "2. `git rebase origin/main`; resolve each conflict, `git add`, "
                     "`git rebase --continue`.\n"
                     "3. Run the tests and lint.\n"
-                    f"4. `git push --force-with-lease origin {branch}` (the only case where a "
+                    f"4. `{force_push}` (the only case where a "
                     "force-push is allowed, and only to this branch).\n"
                     f'5. `bd update <this issue> --append-notes "PR: {pr.url}"`. Do not close '
                     f"this issue or {bead}: the reviewer closes both when it merges.",

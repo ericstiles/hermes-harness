@@ -65,6 +65,10 @@ WHAT HAPPENS
        - a hermes-run or "hermes chat" process already running in ANY repo
          (one local model, so one run at a time); a tests/run_tests.sh run's
          own processes do not count
+       - Docker does not answer: the docker command is missing, or 'docker info'
+         fails or takes longer than HERMES_DOCKER_TIMEOUT. It only checks: it
+         never starts colima or Docker. (Without python3, which runs the time
+         limit, it warns and does not check.)
   4. Checks the hermes-harness checkout it runs from: fetches origin main (at
      most HERMES_FRESHNESS_TIMEOUT) and prints a warning, then carries on, if
      the checkout is behind origin/main (with the pull command to run), the
@@ -98,11 +102,12 @@ ENVIRONMENT
                  only if exported in the tab's shell, not by this command.
   HERMES_FRESHNESS_CHECK   0 skips the harness checkout check (step 4). Default 1.
   HERMES_FRESHNESS_TIMEOUT time limit for its git fetch. Default 10s.
+  HERMES_DOCKER_TIMEOUT    time limit for the 'docker info' check. Default 15s.
 
 EXIT STATUS
   0  started (or --dry-run, or --help)
   1  not started: GITHUB_REPO unknown, no GH_TOKEN, a run is already
-     active, or no herdr/tmux
+     active, Docker does not answer, or no herdr/tmux
   2  bad usage: unknown option, or not inside a git repo
 
 EXAMPLES
@@ -116,6 +121,30 @@ EOF
 }
 for _a in "$@"; do case "$_a" in -h|--help) usage; exit 0 ;; esac; done
 
+# Why Docker cannot be used and the fix (bead 5qy), or nothing. hermes-run checks this too, but only
+# after the tab is open. The watchdog bounds it: a wedged VM can hang `docker info`.
+docker_problem() {
+  local limit=${HERMES_DOCKER_TIMEOUT:-15s} rc why fix="start your container runtime (Docker Desktop, OrbStack, ...)"
+  command -v docker >/dev/null 2>&1 || {
+    printf '%s\n    %s' "Docker is not installed or not on PATH (docker command not found)." \
+      "Fix: install Docker, or add its folder to PATH."
+    return 0
+  }
+  command -v python3 >/dev/null 2>&1 || {
+    echo "warning: python3 not found; it runs the time limit, so Docker was not checked" >&2
+    return 0
+  }
+  python3 "$HARNESS_HOME/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \
+    docker info >/dev/null 2>&1; rc=$?
+  [ "$rc" = 0 ] && return 0
+  why="Docker is not answering ('docker info' failed)."
+  command -v colima >/dev/null 2>&1 && fix="colima start"
+  if [ "$rc" = 124 ]; then
+    why="Docker is not answering ('docker info' gave no answer within $limit)."
+    [ "$fix" = "colima start" ] && fix="colima restart"
+  fi
+  printf '%s\n    %s' "$why" "Fix: $fix"
+}
 hh_repo || exit 2
 TO=""; REASON=manual; ISSUE=unknown; MAX=10; DRY=0; CLEAN=""
 while [ $# -gt 0 ]; do
@@ -141,6 +170,9 @@ if hh_active_procs | grep -qv hermes-launch; then
   problems="$problems
   - A hermes-run / hermes chat process is already running (one run at a time)."
 fi
+docker=$(docker_problem)
+[ -z "$docker" ] || problems="$problems
+  - $docker"
 if [ -n "$problems" ]; then
   echo "Not starting. Missing or blocking:$problems" >&2; exit 1
 fi

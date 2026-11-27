@@ -46,8 +46,29 @@ def full(b):
     return {**b, "title": "title " + b["id"], "dependencies": deps}
 
 
-if args[:1] == ["show"]:
-    if os.environ.get("STUB_SHOW_FAIL") == "1" or args[1] not in beads:
+def flat(b):
+    """The shape `bd ready` and `bd list` give dependencies (bd 1.3.4)."""
+    deps = [{"depends_on_id": i, "type": "blocks"} for i in b.get("blocks", [])]
+    if b.get("origin"):
+        deps.append({"depends_on_id": b["origin"], "type": "discovered-from"})
+    return {**b, "title": "title " + b["id"], "dependencies": deps}
+
+
+if args[:1] == ["list"] and "--notes-contains" in args:
+    if os.environ.get("STUB_LIST_FAIL") == "1":
+        sys.exit(1)
+    text = args[args.index("--notes-contains") + 1]
+    print(json.dumps([
+        flat(b) for b in beads.values()
+        if text in b.get("notes", "") and ("--status=open" not in args or b["status"] == "open")
+    ]))
+elif args[:1] == ["update"] and args[2:3] == ["--append-notes"]:
+    path = os.path.join(db, args[1] + ".json")
+    old = beads[args[1]].get("notes", "")
+    with open(path, "w") as f:
+        json.dump({**beads[args[1]], "notes": (old + "\n" if old else "") + args[3]}, f)
+elif args[:1] == ["show"]:
+    if args[1] not in beads:
         sys.exit(1)
     print(json.dumps([full(beads[args[1]])]))
 elif args[:1] == ["ready"]:
@@ -62,7 +83,7 @@ elif args[:1] == ["ready"]:
         key=lambda b: (b["priority"], b["id"]),
     )
     limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 100
-    print(json.dumps([full(b) for b in (ready[:limit] if limit else ready)]))
+    print(json.dumps([flat(b) for b in (ready[:limit] if limit else ready)]))
 elif args[:1] == ["stats"]:
     print('{"summary": {"ready_issues": 1, "total_issues": 3}}')
 elif args[:2] == ["dolt", "pull"]:
@@ -98,6 +119,10 @@ bead() { # <id> <priority> <status> [blocker ids, space separated] [extra JSON m
   printf '{"id": "%s", "priority": %s, "status": "%s", "blocks": [%s]%s}\n' \
     "$1" "$2" "$3" "${blocks%,}" "${5:+, $5}" > "$STUB_DB/$1.json"
 }
+rq() { # <id> <priority> <status> <blockers> : a bead the agent requeued (with the note it writes)
+  bead "$1" "$2" "$3" "$4" '"notes": "REQUEUED: blocked by x: why"'
+}
+set_status() { python3 -c 'import json,sys; p,s=sys.argv[1:]; d=json.load(open(p)); d["status"]=s; json.dump(d,open(p,"w"))' "$STUB_DB/$1.json" "$2"; }
 agent_run() { # <chat number> <claimed id> <last words>
   printf '  ┊ 💻 $ bd update %s --claim --json\n%s\n\nResume this session with:\n' "$2" "$3" > "$STUB_PLAN/$1"
 }
@@ -192,55 +217,86 @@ STUB_PULL_FAIL=1 hrun 1
 say "$out" | grep -q 'warning: bd dolt pull failed' && say "$out" | grep -q '^FINAL_RESULT=REQUEUED$' \
   && ok "requeue: a failed bd dolt pull warns and still requeues" || bad "requeue: pull fails" "$(say "$out" | tail -6)"
 
-# --- chain-ordered pick (lib/requeue.sh) ---
-pick() { # sets picked, rc from hh_chain_pick on $stack
-  picked=$(HARNESS_HOME="$H" bash -c '. "$HARNESS_HOME/lib/requeue.sh"; hh_chain_pick "$1"' _ "$stack" 2>"$tmp/pick.err"); rc=$?
+# --- chain-ordered pick (lib/requeue.sh): rebuilt from beads each time, so it survives launches ---
+pick() { # sets picked, why (the explanation lines), rc
+  local res
+  res=$(HARNESS_HOME="$H" bash -c '. "$HARNESS_HOME/lib/requeue.sh"; hh_chain_pick
+    echo "PICKED=$HH_CHAIN_PICK"; printf "%s\n" "$HH_CHAIN_LOG"' 2>"$tmp/pick.err"); rc=$?
+  picked=$(say "$res" | sed -n 's/^PICKED=//p'); why=$(say "$res" | sed 1d)
 }
-stack="$tmp/stack"
-held() { paste -sd ' ' "$stack"; }
-
+chain_check() { # <label> <expected pick> <explanation substrings...>
+  local label=$1 want=$2 e missing=""; shift 2
+  pick
+  for e in "$@"; do say "$why" | grep -qF -- "$e" || missing="$missing [$e]"; done
+  [ $rc -eq 0 ] && [ "$picked" = "$want" ] && [ -z "$missing" ] && ok "chain pick: $label" \
+    || bad "chain pick: $label" "rc=$rc picked='$picked' missing$missing :: $why $(cat "$tmp/pick.err")"
+}
 # --- test_chain_pick_deepest_ready_blocker ---
-reset_db; bead om-a 2 open om-b; bead om-b 2 open om-c; bead om-c 3 open; bead om-x 1 open
-echo om-a > "$stack"; pick
-[ $rc -eq 0 ] && [ "$picked" = om-c ] && [ "$(held)" = om-a ] \
-  && ok "chain pick: the deepest ready blocker, not an unrelated higher priority issue" || bad "chain pick: deepest" "rc=$rc '$picked' $(held)"
+reset_db; rq om-a 2 open om-b; bead om-b 2 open om-c; bead om-c 3 open; bead om-x 1 open
+chain_check "the deepest ready blocker, not an unrelated higher priority issue" om-c \
+  'REQUEUE CHAIN: 1 requeued issue(s) still to be finished: om-a' 'om-a waits on om-b' 'om-b waits on om-c' \
+  'next pick: om-c (a ready blocker; chain om-a -> om-b -> om-c)'
 # --- test_chain_pick_returns_down_the_chain ---
-bead om-c 3 closed; pick
-[ "$picked" = om-b ] && [ "$(held)" = om-a ] && ok "chain pick: then the next one down" || bad "chain pick: down" "'$picked' $(held)"
-bead om-b 2 closed; pick
-[ "$picked" = om-a ] && [ -z "$(held)" ] && ok "chain pick: then the requeued issue, which leaves the stack" || bad "chain pick: top" "'$picked' $(held)"
-pick
-[ $rc -eq 0 ] && [ -z "$picked" ] && ok "chain pick: an empty stack picks nothing" || bad "chain pick: empty" "rc=$rc '$picked'"
+set_status om-c closed; chain_check "then the next one down" om-b 'next pick: om-b'
+set_status om-b closed
+chain_check "then the requeued issue, ahead of higher priority" om-a 'next pick: om-a (it was requeued and its blockers are closed)'
+set_status om-a in_progress; chain_check "a claimed issue leaves the chain" ""
+[ -z "$why" ] && ok "chain pick: nothing requeued, nothing logged" || bad "chain pick: quiet" "$why"
 # --- test_chain_pick_falls_back_when_chain_not_ready ---
-reset_db; bead om-a 2 open om-b; bead om-b 2 in_progress; bead om-x 1 open
-echo om-a > "$stack"; pick
-[ $rc -eq 0 ] && [ -z "$picked" ] && [ "$(held)" = om-a ] \
-  && ok "chain pick: nothing ready on the chain falls back and keeps the stack" || bad "chain pick: fallback" "rc=$rc '$picked' $(held)"
+reset_db; rq om-a 2 open om-b; bead om-b 2 in_progress "" '"assignee": "hermes"'; bead om-x 1 open
+chain_check "nothing ready on the chain: the normal pick, and it says why" "" \
+  'om-b is in_progress, claimed by hermes (being worked, or its PR waits for review)' \
+  'nothing on these chains is ready: picking as usual' 'taken first once its blockers are closed'
+# a review fix of a blocker whose PR was rejected is part of the chain
+bead om-f 2 open "" '"labels": ["review-fix"], "origin": "om-b"'; bead om-n 1 open "" '"origin": "om-b"'
+chain_check "a blocker's open review fix is worked (not other issues discovered from it)" om-f \
+  'next pick: om-f (a review fix of om-b; chain om-a -> om-b -> om-f)'
+set_status om-f in_progress; chain_check "a claimed review fix waits like its ticket" "" 'picking as usual'
 # several blockers: priority then id; one claimed elsewhere is skipped
-reset_db; bead om-a 2 open "om-m om-k om-z"; bead om-m 2 open; bead om-k 2 open; bead om-z 1 in_progress
-echo om-a > "$stack"; pick
-eq "chain pick: several blockers in priority then id order, a claimed one skipped" "$picked" om-k
-# only the top of the stack is walked; a closed top is dropped
-reset_db; bead om-a 2 open om-b; bead om-b 2 closed; bead om-d 2 closed
-printf 'om-a\nom-d\n' > "$stack"; pick
-[ "$picked" = om-a ] && [ -z "$(held)" ] && ok "chain pick: a closed top is dropped, then the one below" || bad "chain pick: closed top" "'$picked' $(held)"
-reset_db; bead om-a 2 open om-b; bead om-b 2 open om-a; echo om-a > "$stack"; pick
-[ $rc -eq 2 ] && [ "$picked" = "om-a -> om-b -> om-a" ] && ok "chain pick: a cycle is reported" || bad "chain pick: cycle" "rc=$rc '$picked'"
-reset_db; echo om-a > "$stack"; pick
-[ $rc -eq 0 ] && [ -z "$picked" ] && grep -q 'warning:.*om-a' "$tmp/pick.err" && [ "$(held)" = om-a ] \
-  && ok "chain pick: a bd failure warns and falls back" || bad "chain pick: bd fails" "rc=$rc '$picked' $(cat "$tmp/pick.err")"
+reset_db; rq om-a 2 open "om-m om-k om-z"; bead om-m 2 open; bead om-k 2 open; bead om-z 1 in_progress
+chain_check "several blockers in priority then id order, a claimed one skipped" om-k
+# several requeued issues: a finishable one first; else every chain is looked at
+reset_db; rq om-a 2 open om-b; bead om-b 2 closed; rq om-d 1 open om-e; bead om-e 2 open
+chain_check "an issue that can be finished comes before another chain's blocker" om-a '2 requeued issue(s) still to be finished: om-d om-a'
+reset_db; rq om-a 1 open om-b; bead om-b 2 in_progress; rq om-d 2 open om-e; bead om-e 2 open
+chain_check "a waiting chain does not hide a ready one" om-e
+reset_db; rq om-a 2 open om-b; bead om-b 2 blocked
+chain_check "a blocker marked blocked is named for the human" "" 'om-b is blocked: needs a human (bd show om-b)'
+# --- cycles and look-alikes ---
+reset_db; rq om-a 1 open om-b; bead om-b 2 open om-a; rq om-d 2 open om-e; bead om-e 2 open
+chain_check "a cycle is reported and skipped; other chains go on" om-e 'dependency cycle om-a -> om-b -> om-a: needs a human'
+reset_db; bead om-a 1 open "" '"notes": "REQUEUED: blocked by om-b: no edge was ever added"'
+bead om-b 2 open om-c '"notes": "see REQUEUED: blocked by in the docs"'; bead om-c 2 open
+chain_check "a note without an edge, or a mention in prose, is not a requeue" ""
+reset_db; rq om-a 2 open om-b
+STUB_LIST_FAIL=1 chain_check "a bd failure says so and falls back" "" 'could not read the requeue chain' 'picking as usual'
 
+# --- across launches: the chain is remembered in beads (owner's requirement: get A done) ---
+reset_db; bead om-a 2 open om-b; bead om-b 2 open; bead om-x 1 open; agent_run 1 om-a RUN_REQUEUED
+hrun 1
+grep -q 'bd update om-a --append-notes REQUEUED: blocked by om-b' "$STUB_LOG" && say "$out" | grep -q 'REQUEUE CHAIN: om-a had no REQUEUED note; added it' \
+  && ok "requeue: a missing note is added, so later launches remember" || bad "requeue: note added" "$(say "$out" | grep REQUEUE)"
+say "$out" | grep -q 'REQUEUE CHAIN: om-a is open again; it is taken first once om-b is closed' \
+  && say "$out" | grep -q 'REQUEUE CHAIN: state at the end of this loop' && say "$out" | grep -q 'REQUEUE CHAIN: next pick: om-b' \
+  && grep -q '^REQUEUE CHAIN: next pick: om-b' "$(first_log)" \
+  && ok "requeue: the loop's end says what comes next, in the run log too" || bad "requeue: end state" "$(say "$out" | grep REQUEUE)"
+agent_run 1 om-b NO_READY_WORK; hrun 1
+prompt 1 | grep -q 'Work issue om-b ' && ok "requeue: a new launch starts with the blocker" || bad "requeue: next launch" "$(prompt 1)"
+grep -q '^REQUEUE CHAIN: next pick: om-b' "$(first_log)" && grep -q 'REQUEUE CHAIN: next pick: om-b' "$W"/logs/run-*.timed.txt \
+  && ok "requeue: the run log and the timed log explain the pick" || bad "requeue: pick log" "$(head -8 "$(first_log)")"
+set_status om-b closed; agent_run 1 om-a NO_READY_WORK; hrun 1
+prompt 1 | grep -q 'Work issue om-a ' && ok "requeue: once the blocker is closed, a new launch takes the requeued issue first" \
+  || bad "requeue: A next" "$(prompt 1) $(say "$out" | grep REQUEUE)"
 # the loop itself falls back to the agent's own pick when the chain is not ready
 reset_db; bead om-a 2 open om-b; bead om-b 2 in_progress; bead om-x 1 open; agent_run 1 om-a RUN_REQUEUED
 hrun 2
-[ "$(chats)" = 2 ] && ! prompt 2 | grep -q 'Work issue' \
-  && ok "requeue: the loop falls back to the normal pick" || bad "requeue: loop fallback" "$(prompt 2)"
-# a cycle that appears after the requeue (STUB_CYCLE_AT_PULL: synced in before the next pick)
-reset_db; bead om-a 2 open om-b; bead om-b 2 open; agent_run 1 om-a RUN_REQUEUED
-STUB_CYCLE_AT_PULL=2 hrun 3
-[ $rc -eq 1 ] && [ "$(chats)" = 1 ] && say "$out" | grep -q 'cycle: om-a -> om-b -> om-a' && say "$out" | grep -q '^FINAL_RESULT=BLOCKED$' \
-  && grep -q '^RUN_RESULT=BLOCKED$' "$(first_log)" \
-  && ok "requeue: a cycle found at the chain pick stops the loop as BLOCKED" || bad "requeue: loop cycle" "rc=$rc chats=$(chats) $(say "$out" | tail -6)"
+[ "$(chats)" = 2 ] && ! prompt 2 | grep -q 'Work issue' && say "$out" | grep -q 'nothing on these chains is ready' \
+  && ok "requeue: the loop falls back to the normal pick and says why" || bad "requeue: loop fallback" "$(prompt 2) $(say "$out" | grep REQUEUE)"
+# a cycle synced in after the requeue (STUB_CYCLE_AT_PULL) is reported; the loop goes on
+reset_db; bead om-a 2 open om-b; bead om-b 2 open; agent_run 1 om-a RUN_REQUEUED; agent_run 2 om-x NO_READY_WORK
+STUB_CYCLE_AT_PULL=3 hrun 2
+[ "$(chats)" = 2 ] && say "$out" | grep -q 'dependency cycle om-a -> om-b -> om-a: needs a human' && ! prompt 2 | grep -q 'Work issue' \
+  && ok "requeue: a cycle found at the pick is reported, not worked" || bad "requeue: loop cycle" "rc=$rc chats=$(chats) $(say "$out" | grep REQUEUE)"
 
 # --- the loop counts these files as its own code (bead eyx), and the workflow text says what to do ---
 loaded=$(bash -c '. "$1/lib/code_stamp.sh"; hh_loaded_files "$1"' _ "$H")
@@ -259,6 +315,8 @@ for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
   grep -qF 'git add -A && git commit -m "wip(<id>): <summary>"' "$ROOT/$doc" \
     && [ "$(grep -cF 'git status --porcelain' "$ROOT/$doc")" -ge 3 ] \
     && grep -qF 'commit and push anything uncommitted to `bd/<T>`' "$ROOT/$doc" \
+    && grep -qF 'git log origin/main..bd/<id>' "$ROOT/$doc" && grep -qF 'git checkout -b bd/<id> origin/main' "$ROOT/$doc" \
+    && grep -qF 'WIP: bd/<T>' "$ROOT/$doc" \
     && ok "requeue: $doc leaves a clean clone, review-fix too" || bad "requeue: $doc clean clone" "missing"
 done
 

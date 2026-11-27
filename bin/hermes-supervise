@@ -28,8 +28,8 @@
 #                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
 #   QUEUE_EMPTY / OK_DONE  DONE / WAIT: nothing to do.
 #   REQUEUED         DONE: the loop ended on a requeue (its --max was used up) and nothing is
-#                    relaunched, so --max stays the cap. A new launch starts with an empty
-#                    requeue chain and picks by priority.
+#                    relaunched, so --max stays the cap. The next launch reads the requeue chain
+#                    from beads and works it first (see the log's "REQUEUE CHAIN:" lines).
 #   LOOP_STOP=HARNESS_CHANGED in the run log (hermes-run stopped the loop between runs because
 #                    the harness code changed): after an OK_DONE or REQUEUED run, AUTO_RELAUNCH so
 #                    the issues that were left run on the new code; the LOOP_STOP line is shown
@@ -91,7 +91,7 @@ case "$class" in
   RUNNING)  action=WAIT; why="a run is in progress; check again in 20-30 min" ;;
   OK_DONE)  action=DONE; why="run finished and opened a PR; review/merge is the human's step" ;;
   QUEUE_EMPTY) action=DONE; why="no ready beads issues (bd dolt pull to confirm, then create issues)" ;;
-  REQUEUED) action=DONE; why="the loop ended on a requeue: ${issue:-the issue} waits on its blocker (bd show ${issue:-<id>}); nothing is relaunched, run hermes-launch when you want to go on" ;;
+  REQUEUED) action=DONE; why="the loop ended on a requeue: ${issue:-the issue} waits on its blocker (bd show ${issue:-<id>}); nothing is relaunched, run hermes-launch when you want to go on: it works this chain first (see the REQUEUE CHAIN lines)" ;;
   TIMEOUT)
     if [ -n "$issue" ] && [ "$(count_today "$issue" TIMEOUT)" -ge 2 ]; then
       why="issue $issue timed out twice today: split it (bd create ... --deps discovered-from:$issue), bd update $issue --status blocked, then relaunch"

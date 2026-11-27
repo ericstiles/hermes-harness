@@ -33,7 +33,8 @@
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
 #   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
-#   HERMES_BEADS_TIMEOUT=15s     time limit for each `bd` call behind the BEADS: lines
+#   HERMES_BEADS_TIMEOUT=15s     time limit for each `bd` read behind the BEADS: lines and the
+#                                requeue chain (lib/requeue.py)
 #   HERMES_BASELINE_TIMEOUT=15s  time limit for `hermes prompt-size` behind the CONTEXT: baseline line
 #   HERMES_CONTEXT_TIMEOUT=30s   time limit for the session export behind the CONTEXT: line
 #   HERMES_CONTEXT_WINDOW=N      context window for the CONTEXT: line (default: looked up from Hermes

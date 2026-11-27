@@ -27,11 +27,13 @@
 #                    log's RUN_PROVIDER: line, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
 #                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
 #   QUEUE_EMPTY / OK_DONE  DONE / WAIT: nothing to do.
-#   REQUEUED         AUTO_RELAUNCH (no --issue: nothing needs a human), at most 3 a day. The new
-#                    loop starts with an empty requeue chain and picks by priority.
+#   REQUEUED         DONE: the loop ended on a requeue (its --max was used up) and nothing is
+#                    relaunched, so --max stays the cap. A new launch starts with an empty
+#                    requeue chain and picks by priority.
 #   LOOP_STOP=HARNESS_CHANGED in the run log (hermes-run stopped the loop between runs because
-#                    the harness code changed): after an OK_DONE run, AUTO_RELAUNCH so the rest of
-#                    the queue runs on the new code; the LOOP_STOP line is shown either way.
+#                    the harness code changed): after an OK_DONE or REQUEUED run, AUTO_RELAUNCH so
+#                    the issues that were left run on the new code; the LOOP_STOP line is shown
+#                    either way.
 #   AUTH_ERROR / BLOCKED / UNKNOWN   ASK_HUMAN with evidence.
 #   NOTES_LOST       ASK_HUMAN with the bd commands that restore the PR link.
 # Hard limit: 3 automatic relaunches per issue per day (counted in
@@ -89,12 +91,7 @@ case "$class" in
   RUNNING)  action=WAIT; why="a run is in progress; check again in 20-30 min" ;;
   OK_DONE)  action=DONE; why="run finished and opened a PR; review/merge is the human's step" ;;
   QUEUE_EMPTY) action=DONE; why="no ready beads issues (bd dolt pull to confirm, then create issues)" ;;
-  REQUEUED) # no --issue, so the per-issue counter cannot see these relaunches: count them
-    rq_today=$(awk -v d="$today" '$1==d && $2=="REQUEUED"{n++} END{print n+0}' "$STATE" 2>/dev/null || echo 0)
-    if [ "$rq_today" -ge "$MAX_RELAUNCH" ]; then
-      why="the REQUEUED relaunch limit ($MAX_RELAUNCH/day) is reached: check the blocker chain of ${issue:-the issue} (bd show ${issue:-<id>}), then hermes-launch --reason REQUEUED"
-    else action=AUTO_RELAUNCH; next="hermes-launch --reason REQUEUED"
-         why="${issue:-the issue} was requeued behind its blocker (bd show ${issue:-<id>}); relaunch to work the queue"; fi ;;
+  REQUEUED) action=DONE; why="the loop ended on a requeue: ${issue:-the issue} waits on its blocker (bd show ${issue:-<id>}); nothing is relaunched, run hermes-launch when you want to go on" ;;
   TIMEOUT)
     if [ -n "$issue" ] && [ "$(count_today "$issue" TIMEOUT)" -ge 2 ]; then
       why="issue $issue timed out twice today: split it (bd create ... --deps discovered-from:$issue), bd update $issue --status blocked, then relaunch"

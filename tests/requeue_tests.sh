@@ -5,135 +5,8 @@
 # No network: bd is a small fixture beads DB, hermes/docker/gh/ps are stubs.
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); ROOT=$(cd "$HERE/.." && pwd)
-pass=0; fail=0
-ok()  { pass=$((pass+1)); echo "ok   - $1"; }
-bad() { fail=$((fail+1)); echo "FAIL - $1 (got: ${2:-})"; }
-eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "$2 != $3"; }
-say() { ( trap '' PIPE; printf '%s\n' "$1" ) 2>/dev/null || true; }
-# the temp dir name is the test marker: the harness's "a run is active" check skips such processes
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/hermes-harness-test.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
-tmp=${tmp%/}; tmp=${tmp//\/\//\/}; ln -s "$ROOT" "$tmp/harness"; H="$tmp/harness"; BIN="$H/bin"
-mkdir -p "$tmp/target" "$tmp/bin" "$tmp/plan"; W=$(cd "$tmp/target" && pwd -P)
-git -C "$W" init -q -b main; git -C "$W" remote add origin git@github.com:acme/widgets.git
-unset GITHUB_REPO HERMES_REPO HERMES_LOG_DIR
-export HERMES_AGENT_LOG="$tmp/absent-agent.log" STUB_DB="$tmp/db" STUB_LOG="$tmp/stub.log"
-export STUB_PLAN="$tmp/plan" STUB_COUNT="$tmp/count" GH_TOKEN=x
-
-# --- fixture beads DB: one JSON file per bead; `ready` and `show` are computed from them ---
-cat > "$tmp/bin/bd" <<'S'
-#!/usr/bin/env python3
-import glob, json, os, sys
-
-db, args = os.environ["STUB_DB"], sys.argv[1:]
-with open(os.environ["STUB_LOG"], "a") as log:
-    print("bd", *args, file=log)
-beads = {}
-for path in glob.glob(os.path.join(db, "*.json")):
-    with open(path) as f:
-        bead = json.load(f)
-    beads[bead["id"]] = bead
-
-
-def dep(i, kind):
-    b = beads[i]
-    return {"id": i, "status": b["status"], "priority": b["priority"], "dependency_type": kind}
-
-
-def full(b):
-    deps = [dep(i, "blocks") for i in b.get("blocks", [])]
-    if b.get("parent"):
-        deps.append(dep(b["parent"], "parent-child"))
-    return {**b, "title": "title " + b["id"], "dependencies": deps}
-
-
-def flat(b):
-    """The shape `bd ready` and `bd list` give dependencies (bd 1.3.4)."""
-    deps = [{"depends_on_id": i, "type": "blocks"} for i in b.get("blocks", [])]
-    if b.get("origin"):
-        deps.append({"depends_on_id": b["origin"], "type": "discovered-from"})
-    return {**b, "title": "title " + b["id"], "dependencies": deps}
-
-
-if args[:1] == ["list"] and "--notes-contains" in args:
-    if os.environ.get("STUB_LIST_FAIL") == "1":
-        sys.exit(1)
-    text = args[args.index("--notes-contains") + 1]
-    print(json.dumps([
-        flat(b) for b in beads.values()
-        if text in b.get("notes", "") and ("--status=open" not in args or b["status"] == "open")
-    ]))
-elif args[:1] == ["update"] and args[2:3] == ["--append-notes"]:
-    path = os.path.join(db, args[1] + ".json")
-    old = beads[args[1]].get("notes", "")
-    with open(path, "w") as f:
-        json.dump({**beads[args[1]], "notes": (old + "\n" if old else "") + args[3]}, f)
-elif args[:1] == ["show"]:
-    if args[1] not in beads:
-        sys.exit(1)
-    print(json.dumps([full(beads[args[1]])]))
-elif args[:1] == ["ready"]:
-    ready = sorted(
-        (
-            b
-            for b in beads.values()
-            if b["status"] == "open"
-            and b.get("issue_type") != "epic"
-            and all(beads[i]["status"] == "closed" for i in b.get("blocks", []))
-        ),
-        key=lambda b: (b["priority"], b["id"]),
-    )
-    limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 100
-    print(json.dumps([flat(b) for b in (ready[:limit] if limit else ready)]))
-elif args[:1] == ["stats"]:
-    print('{"summary": {"ready_issues": 1, "total_issues": 3}}')
-elif args[:2] == ["dolt", "pull"]:
-    with open(os.environ["STUB_LOG"]) as log:
-        pulls = sum(line.startswith("bd dolt pull") for line in log)
-    if str(pulls) == os.environ.get("STUB_CYCLE_AT_PULL"):
-        with open(os.path.join(db, "om-b.json"), "w") as f:
-            json.dump({**beads["om-b"], "blocks": ["om-a"]}, f)
-    sys.exit(1 if os.environ.get("STUB_PULL_FAIL") == "1" else 0)
-S
-# chat number N prints $STUB_PLAN/N (else a run that opens a PR); the prompt is logged
-cat > "$tmp/bin/hermes" <<'S'
-#!/bin/sh
-[ "$1" = config ] && { echo stub; exit 0; }
-[ "$1" = chat ] || exit 1
-for last; do :; done
-echo "PROMPT: $last" >> "$STUB_LOG"
-n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$STUB_COUNT"
-[ -n "${STUB_TOUCH:-}" ] && echo "# changed mid-run" >> "$STUB_TOUCH"
-if [ -f "$STUB_PLAN/$n" ]; then cat "$STUB_PLAN/$n"
-else echo "PR https://github.com/o/r/pull/1"; echo; echo "Resume this session with:"; fi
-exit 0
-S
-printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/docker"; printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ps"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
-chmod +x "$tmp/bin/"*
-export PATH="$tmp/bin:$PATH"
-
-reset_db() { rm -rf "$STUB_DB" "$STUB_PLAN"; mkdir -p "$STUB_DB" "$STUB_PLAN"; }
-bead() { # <id> <priority> <status> [blocker ids, space separated] [extra JSON members]
-  local blocks="" b
-  for b in ${4:-}; do blocks="$blocks\"$b\","; done
-  printf '{"id": "%s", "priority": %s, "status": "%s", "blocks": [%s]%s}\n' \
-    "$1" "$2" "$3" "${blocks%,}" "${5:+, $5}" > "$STUB_DB/$1.json"
-}
-rq() { # <id> <priority> <status> <blockers> : a bead the agent requeued (with the note it writes)
-  bead "$1" "$2" "$3" "$4" '"notes": "REQUEUED: blocked by x: why"'
-}
-set_status() { python3 -c 'import json,sys; p,s=sys.argv[1:]; d=json.load(open(p)); d["status"]=s; json.dump(d,open(p,"w"))' "$STUB_DB/$1.json" "$2"; }
-agent_run() { # <chat number> <claimed id> <last words>
-  printf '  ┊ 💻 $ bd update %s --claim --json\n%s\n\nResume this session with:\n' "$2" "$3" > "$STUB_PLAN/$1"
-}
-hrun() { # <max> : hermes-run in the target repo; sets out, rc
-  rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
-  out=$(cd "$W" && "$BIN/hermes-run" "$@" 2>&1); rc=$?
-}
-chats() { grep -c '^PROMPT: ' "$STUB_LOG"; }
-prompt() { grep '^PROMPT: ' "$STUB_LOG" | sed -n "${1}p"; }
-first_log() { ls "$W"/logs/run-*.log | sed 's/\.log$//' | LC_ALL=C sort | head -n 1 | sed 's/$/.log/'; }
-sup() { (cd "$W" && HERMES_LOG_DIR="$W/logs" "$BIN/hermes-supervise" "$@"); }
+# shellcheck source=loop_fixture.sh
+. "$HERE/loop_fixture.sh"
 
 # --- test_classify_run_requeued_marker ---
 . "$ROOT/lib/classify.sh"
@@ -150,8 +23,8 @@ agent_run 1 om-a RUN_REQUEUED; agent_run 2 om-b NO_READY_WORK # any clean second
 hrun 2
 [ $rc -eq 0 ] && [ "$(chats)" = 2 ] && ! say "$out" | grep -q 'Issue blocked' \
   && ok "requeue: the loop continues after REQUEUED" || bad "requeue: loop continues" "rc=$rc chats=$(chats) $(say "$out" | tail -5)"
-prompt 1 | grep -q 'Work issue' && bad "requeue: first prompt names an issue" "$(prompt 1)" \
-  || ok "requeue: an empty chain leaves the pick to the agent"
+prompt 1 | grep -q 'Work issue om-x ' && ok "requeue: an empty chain takes the first ready issue" \
+  || bad "requeue: first pick" "$(prompt 1)"
 prompt 2 | grep -q 'Follow AGENTS.md "Autonomous Beads workflow".*Work issue om-b ' \
   && ok "requeue: the next run is told to work the blocker, ahead of a higher priority issue" || bad "requeue: chain prompt" "$(prompt 2)"
 grep -q '^RUN_RESULT=REQUEUED$' "$(first_log)" && grep -q '^REQUEUE: om-a blocked by om-b$' "$(first_log)" \
@@ -290,7 +163,7 @@ prompt 1 | grep -q 'Work issue om-a ' && ok "requeue: once the blocker is closed
 # the loop itself falls back to the agent's own pick when the chain is not ready
 reset_db; bead om-a 2 open om-b; bead om-b 2 in_progress; bead om-x 1 open; agent_run 1 om-a RUN_REQUEUED
 hrun 2
-[ "$(chats)" = 2 ] && ! prompt 2 | grep -q 'Work issue' && say "$out" | grep -q 'nothing on these chains is ready' \
+[ "$(chats)" = 2 ] && prompt 2 | grep -q 'Work issue om-x ' && say "$out" | grep -q 'nothing on these chains is ready' \
   && ok "requeue: the loop falls back to the normal pick and says why" || bad "requeue: loop fallback" "$(prompt 2) $(say "$out" | grep REQUEUE)"
 # a cycle synced in after the requeue (STUB_CYCLE_AT_PULL) is reported; the loop goes on
 reset_db; bead om-a 2 open om-b; bead om-b 2 open; agent_run 1 om-a RUN_REQUEUED; agent_run 2 om-x NO_READY_WORK

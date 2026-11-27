@@ -14,7 +14,7 @@ log=$(bs_log)
 eq "beads: start line names the expected next bead and the counts" "$(sed -n 2p "$log")" "$BS_START"
 say "$out" | grep -qF "$BS_START" && grep -qF "] $BS_START" "$W"/logs/run-*.timed.txt \
   && ok "beads: start line is on the terminal and in the timed log" || bad "beads: start terminal/timed" "$out"
-grep -q '^bd ready --json --exclude-type epic --sort priority --limit 1$' "$STUB_LOG" \
+grep -q '^bd ready --json --exclude-type epic --exclude-label owner-present --sort priority --limit 1$' "$STUB_LOG" \
   && ok "beads: next comes from the agent's own pick command" || bad "beads: pick command" "$(grep '^bd ready' "$STUB_LOG")"
 say "$out" | grep -q '^BEADS: worked widgets-abc$' \
   && ok "beads: worked line confirms the claimed bead" || bad "beads: worked line" "$(say "$out" | grep '^BEADS:')"
@@ -32,7 +32,7 @@ eq "beads: bd giving no stats gives one unavailable line and the run continues" 
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
 out=$( (export STUB_STATS="$BS_STATS" STUB_BD_READY_FAIL=1; runit "$BIN/hermes-run" 1) 2>&1); rc=$?; log=$(bs_log)
 eq "beads: a failing bd ready says next unavailable, not an empty queue" \
-  "$rc|$(sed -n 2p "$log")|$(tail -n 1 "$log")" \
+  "$rc|$(grep -m 1 '^BEADS:' "$log")|$(tail -n 1 "$log")" \
   "0|BEADS: next unavailable | ready 3 in_progress 0 blocked 2 | open 5 closed 7 of 12 | epics ready to close 0|RUN_RESULT=OK_DONE"
 
 # bd hanging -> stopped at HERMES_BEADS_TIMEOUT, run unchanged and quick

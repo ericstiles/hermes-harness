@@ -13,7 +13,7 @@ overrides the global "do not commit or push" default for this workflow only.
  hermes-run (one Hermes session = one issue)
         │
         ▼
- bd ready --exclude-type epic --sort priority → take the FIRST item
+ bd ready --exclude-type epic --exclude-label owner-present --sort priority → take the FIRST item
         │                                        (empty → NO_READY_WORK)
         ├─────────────── normal issue T ─────────────────┐
         │                                                ▼
@@ -77,10 +77,11 @@ overrides the global "do not commit or push" default for this workflow only.
   (`git pull --rebase`, a bare `git push`) are for interactive sessions. They
   do not apply to these runs: use only the git commands in this workflow.
 - Do exactly ONE issue per session:
-  1. `bd ready --json --exclude-type epic --sort priority` and take the FIRST
-     item. If your prompt says `Work issue <id>`, take that issue instead
-     (`hermes-run` is working a blocker chain). If empty, print `NO_READY_WORK`
-     and stop.
+  1. `bd ready --json --exclude-type epic --exclude-label owner-present --sort priority`
+     and take the FIRST item (issues labelled `owner-present` are for a person
+     to run). If your prompt gives another pick command, use that one. If your
+     prompt says `Work issue <id>`, take that issue instead (`hermes-run` chose
+     it). If empty, print `NO_READY_WORK` and stop.
   2. `bd update <id> --claim --json`, then `bd dolt push` (so the host sees the
      claim at once), then `bd show <id>`. If the issue has the label
      `review-fix`, follow "Review-fix issues" below instead of steps 3-4.
@@ -229,6 +230,9 @@ overrides the global "do not commit or push" default for this workflow only.
   Set priority by impact: data loss or security is P1, wrong behavior is P2,
   polish or docs is P3.
 - Never push to main, never merge, never edit CI/secrets config.
+- Never write real host names, IP addresses, usernames or home or library paths
+  into notes, PR text, commit messages or files: name the environment variable
+  `AGENTS_LOCAL.md` gives for them (e.g. `$PI_HOST`).
 - Sync beads before finishing (`bd dolt push`).
 
 ### Commits inside the sandbox

@@ -5,8 +5,9 @@
     bead_stats.py summary STATS_JSON [ID ...] [--requeued ID->BLOCKERS ...]   # at the loop's end
 
 STATS_JSON is `bd stats --json`; READY_JSON is
-`bd ready --json --exclude-type epic --sort priority --limit 1`, the agent's own pick
-command (AGENTS.md step 1), so `next` is the bead the agent is expected to claim. IDs are
+`bd ready --json --exclude-type epic --sort priority --limit 1` (with `--exclude-label` for
+HERMES_EXCLUDE_LABELS), the pick command of AGENTS.md step 1, or `bd show` of the requeue
+chain's pick, so `next` is the bead the agent is expected to claim. IDs are
 the beads the loop's runs claimed. Prints exactly one line:
 
     BEADS: next <id> "<title>" (P<n>) | ready R in_progress I blocked B | open O closed C of T

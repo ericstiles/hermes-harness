@@ -206,6 +206,7 @@ if [ "$1" = stats ]; then
 fi
 if [ "$1" = ready ]; then
   [ "${STUB_BD_READY_FAIL:-0}" = 1 ] && { echo "bd: database locked" >&2; exit 1; }
+  case " $* " in *" --label-any "*) exit 0 ;; esac # the canned issues carry no labels
   [ -n "$STUB_READY" ] && printf '%s\n' "$STUB_READY"
 fi
 exit 0
@@ -340,12 +341,17 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   [ $rc -ne 0 ] && say "$out" | grep -q 'GITHUB_REPO' && ok "no origin and no GITHUB_REPO -> clear error" || bad "no origin" "$rc $out"
 fi
 # --- a blocked pick is requeued and its blocker chain worked first (bead 35r); runs standalone too ---
-out=$(bash "$HERE/requeue_tests.sh" 2>&1); rc=$?
-printf '%s\n' "$out" | grep -vE '^passed=[0-9]+ failed=[0-9]+$'
-n_ok=$(printf '%s\n' "$out" | grep -c '^ok  '); n_bad=$(printf '%s\n' "$out" | grep -c '^FAIL ')
-pass=$((pass + n_ok)); fail=$((fail + n_bad))
-[ $rc -eq 0 ] || [ "$n_bad" -gt 0 ] || bad "requeue tests stopped early" "rc=$rc"
-unset n_ok n_bad
+child_tests() { # <name> <script>: run a self-contained test file and add up its ok/FAIL lines
+  local out rc n_ok n_bad
+  out=$(bash "$2" 2>&1); rc=$?
+  printf '%s\n' "$out" | grep -vE '^passed=[0-9]+ failed=[0-9]+$'
+  n_ok=$(printf '%s\n' "$out" | grep -c '^ok  '); n_bad=$(printf '%s\n' "$out" | grep -c '^FAIL ')
+  pass=$((pass + n_ok)); fail=$((fail + n_bad))
+  [ $rc -eq 0 ] || [ "$n_bad" -gt 0 ] || bad "$1 tests stopped early" "rc=$rc"
+}
+child_tests requeue "$HERE/requeue_tests.sh"
+# --- issues a person must run are never picked (bead 66y); runs standalone too ---
+child_tests "exclude-labels" "$HERE/exclude_labels_tests.sh"
 # --- hermes-review: CLI wrapper + Python unit tests (pytest via uv; skipped without uv) ---
 out=$("$BIN/hermes-review" --help 2>&1)
 say "$out" | grep -q 'reviewer agent for Hermes PRs' && ok "hermes-review --help" || bad "review help" "$out"

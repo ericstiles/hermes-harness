@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# requeue.sh — sourced by bin/hermes-run: the requeue chain (bead 35r). bash 3.2 compatible.
+# requeue.sh — sourced by bin/hermes-run: what the next run works, from the requeue chain (bead 35r)
+# or the ready list without the issues a person must run (bead 66y). bash 3.2 compatible.
 #
 # A run that finds its issue blocked by another bead adds the edge, releases its claim, notes
 # "REQUEUED: blocked by ..." and prints RUN_REQUEUED. Before every run hermes-run asks which issue
@@ -25,7 +26,29 @@ hh_requeue_accept() { # <history file> <id>
   esac
 }
 
-# Sets HH_CHAIN_PICK (the issue the next run must work; empty = the agent's normal pick) and
+# The labels unattended runs never pick (HERMES_EXCLUDE_LABELS), comma separated; fails, saying why
+# on stderr, when the setting is not a list of labels.
+hh_exclude_labels() { _hh_requeue_py labels; }
+
+# The pick when no chain applies. Sets HH_PICK (the first ready issue an unattended run may take;
+# empty = none, or unknown) and HH_PICK_LOG ("PICK: ..." when the ready list could not be read).
+hh_normal_pick() {
+  local out last
+  out=$(_hh_requeue_py normal)
+  last=$(printf '%s\n' "$out" | tail -n 1)
+  HH_PICK=""
+  HH_PICK_LOG=$(printf '%s\n' "$out" | sed -n 's/^LOG /PICK: /p')
+  case $last in
+    "PICK "*) HH_PICK=${last#PICK } ;;
+    NONE) ;;
+    *) HH_PICK_LOG="PICK: could not read the ready list (requeue.py gave no answer): Hermes picks in step 1" ;;
+  esac
+}
+
+# "PICK: skipping ..." naming the ready issues left for a person; nothing when there are none.
+hh_waiting_line() { _hh_requeue_py waiting | sed -n 's/^LOG /PICK: /p'; }
+
+# Sets HH_CHAIN_PICK (the issue the next run must work; empty = no chain applies) and
 # HH_CHAIN_LOG ("REQUEUE CHAIN: ..." lines saying why; empty when nothing is requeued).
 hh_chain_pick() {
   local out last

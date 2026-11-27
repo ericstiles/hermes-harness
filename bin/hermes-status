@@ -7,6 +7,8 @@
 #             HERMES_TEST_CMD="npm ci && npm test" (run inside the worktree).
 #   -h, --help  show this help and exit (needs no repo)
 # Env (all optional): HERMES_LOG_DIR HERMES_LOG_LINES=30 HERMES_PR_LIMIT=8 HERMES_REPO
+#             HERMES_EXCLUDE_LABELS (owner-present): ready issues with these labels are listed
+#             as "waiting on you"; unattended runs skip them
 #
 # Never commits, pushes, pulls beads, or writes in the repo. Each section
 # tolerates failure and prints "unavailable: <reason>".
@@ -51,6 +53,12 @@ else echo "unavailable: gh not found"; fi
 hdr "beads (local copy; not synced by this script)"
 if have bd; then
   echo "-- ready"; try "bd ready" bd ready
+  if ! excluded=$(python3 "$HARNESS_HOME/lib/requeue.py" labels 2>&1); then
+    echo "-- waiting on you"; echo "unavailable: $excluded"
+  elif [ -n "$excluded" ]; then
+    echo "-- waiting on you (ready, labelled $excluded: unattended runs skip them)"
+    try "bd ready" bd ready --exclude-type epic --label-any "$excluded" --limit 0
+  fi
   echo "-- in progress"; try "bd list" bd list --status=in_progress
   echo "-- blocked"; try "bd blocked" bd blocked
   echo "-- all"; try "bd list --all" bd list --all

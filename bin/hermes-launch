@@ -67,8 +67,9 @@ WHAT HAPPENS
          own processes do not count
        - Docker does not answer: the docker command is missing, or 'docker info'
          fails or takes longer than HERMES_DOCKER_TIMEOUT. It only checks: it
-         never starts colima or Docker. (Without python3, which runs the time
-         limit, it warns and does not check.)
+         never starts colima or Docker. A HERMES_DOCKER_TIMEOUT that is not a
+         duration refuses the launch too. (With the limit at 0, or without a
+         working python3, which runs it, it warns and does not check.)
   4. Checks the hermes-harness checkout it runs from: fetches origin main (at
      most HERMES_FRESHNESS_TIMEOUT) and prints a warning, then carries on, if
      the checkout is behind origin/main (with the pull command to run), the
@@ -102,7 +103,8 @@ ENVIRONMENT
                  only if exported in the tab's shell, not by this command.
   HERMES_FRESHNESS_CHECK   0 skips the harness checkout check (step 4). Default 1.
   HERMES_FRESHNESS_TIMEOUT time limit for its git fetch. Default 10s.
-  HERMES_DOCKER_TIMEOUT    time limit for the 'docker info' check. Default 15s.
+  HERMES_DOCKER_TIMEOUT    time limit for the 'docker info' check; 0 skips it. Seconds
+                           or e.g. 15s, 2m. Default 15s.
 
 EXIT STATUS
   0  started (or --dry-run, or --help)
@@ -125,13 +127,24 @@ for _a in "$@"; do case "$_a" in -h|--help) usage; exit 0 ;; esac; done
 # after the tab is open. The watchdog bounds it: a wedged VM can hang `docker info`.
 docker_problem() {
   local limit=${HERMES_DOCKER_TIMEOUT:-15s} rc why fix="start your container runtime (Docker Desktop, OrbStack, ...)"
+  local duration='^[0-9]+(\.[0-9]+)?[smhd]?$' zero='^0+(\.0+)?$' # lib/watchdog.py's forms
+  # A problem with our own setting or tools is never reported as Docker being down.
+  if ! [[ $limit =~ $duration ]]; then
+    printf '%s\n    %s' "HERMES_DOCKER_TIMEOUT='$limit' is not a duration, so Docker cannot be checked." \
+      "Fix: use seconds or a unit, e.g. 15s or 2m (0 skips the check)."
+    return 0
+  fi
+  if [[ ${limit%[smhd]} =~ $zero ]]; then
+    echo "warning: HERMES_DOCKER_TIMEOUT=$limit: Docker was not checked" >&2
+    return 0
+  fi
   command -v docker >/dev/null 2>&1 || {
     printf '%s\n    %s' "Docker is not installed or not on PATH (docker command not found)." \
       "Fix: install Docker, or add its folder to PATH."
     return 0
   }
-  command -v python3 >/dev/null 2>&1 || {
-    echo "warning: python3 not found; it runs the time limit, so Docker was not checked" >&2
+  python3 -c '' >/dev/null 2>&1 || {
+    echo "warning: python3 is missing or does not run (it runs the time limit), so Docker was not checked" >&2
     return 0
   }
   python3 "$HARNESS_HOME/lib/watchdog.py" --limit "$limit" --extend 0 --grace 2s --log /dev/null -- \

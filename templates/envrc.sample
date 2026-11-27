@@ -32,7 +32,7 @@ source_env_if_exists .envrc.local
 # export HERMES_BEADS_TIMEOUT=15s        # time limit for each `bd` read behind BEADS: and the requeue chain
 
 # --- hermes-launch: the Docker check ---
-# export HERMES_DOCKER_TIMEOUT=15s       # time limit for `docker info` before a launch
+# export HERMES_DOCKER_TIMEOUT=15s       # time limit for `docker info` before a launch; 0 skips the check
 
 # --- hermes-launch: the harness checkout check ---
 # export HERMES_FRESHNESS_CHECK=1        # 0: skip the "harness is behind origin/main" check

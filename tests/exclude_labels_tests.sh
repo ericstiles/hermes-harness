@@ -57,6 +57,19 @@ hrun 2
 [ "$(chats)" = 2 ] && [ "$(say "$out" | grep -c 'PICK: skipping')" = 1 ] \
   && ok "exclude: one skip line per launch" || bad "exclude: once per launch" "chats=$(chats) $(say "$out" | grep PICK)"
 
+# a failed first read of the skipped issues must not hide them for the rest of the launch
+db; bead om-c 3 open; agent_run 2 om-c NO_READY_WORK
+STUB_WAITING_FAILS=1 hrun 2
+[ "$(chats)" = 2 ] && [ "$(say "$out" | grep -c 'PICK: could not list the owner-present issues')" = 1 ] \
+  && [ "$(say "$out" | grep -c 'PICK: skipping owner-present issues: om-a')" = 1 ] \
+  && ok "exclude: after a failed read the skipped issues are still listed, once" \
+  || bad "exclude: failed first read" "chats=$(chats) $(say "$out" | grep PICK)"
+# the BEADS: line names the issue the run was told to work, even if the queue changes right after
+db; STUB_LATE_BEAD=om-0 once
+prompt 1 | grep -q 'Work issue om-b ' && say "$out" | grep -q 'BEADS: next om-b ' \
+  && ok "exclude: the BEADS: line cannot differ from the pick" \
+  || bad "exclude: BEADS vs pick" "$(prompt 1) $(say "$out" | grep BEADS)"
+
 # --- nothing left for an unattended run: no issue is named, and the prompt's command excludes ---
 reset_db; bead om-a 1 open "" "$OWNER"; once
 ! prompt 1 | grep -q 'Work issue' && prompt 1 | grep -qF "In step 1, pick with exactly this command and take the FIRST item: \`$STEP1\`" \
@@ -77,7 +90,7 @@ prompt 1 | grep -q 'Work issue om-c ' \
   && log1 | grep -qx 'PICK: skipping owner-present issues: om-b (a person must run them)' \
   && ok "exclude: an owner-present blocker is not picked; the normal pick runs and the log says why" \
   || bad "exclude: chain blocker" "$(prompt 1) $(log1 | grep -E 'PICK|CHAIN')"
-reset_db; rq om-a 1 open om-b; set_status om-a open; bead om-b 1 closed; bead om-c 3 open
+reset_db; bead om-b 1 closed; bead om-c 3 open
 rq om-a 1 open om-b; python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["labels"]=["owner-present"]; json.dump(d,open(p,"w"))' "$STUB_DB/om-a.json"
 once
 prompt 1 | grep -q 'Work issue om-c ' && log1 | grep -q '^REQUEUE CHAIN: om-a is open but labelled owner-present' \

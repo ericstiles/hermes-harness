@@ -8,14 +8,19 @@ BS_READY='[{"id":"widgets-abc","title":"Do the thing","priority":2,"status":"ope
 BS_START='BEADS: next widgets-abc "Do the thing" (P2) | ready 3 in_progress 0 blocked 2 | open 5 closed 7 of 12 | epics ready to close 0'
 bs_log() { ls "$W"/logs/run-*.log 2>/dev/null | head -n 1; }
 
+# `bd show` of the picked bead: as it stands once the run has opened its PR (the notes check reads it)
+mkdir -p "$tmp/bs-beads"
+printf '[{"id":"widgets-abc","title":"Do the thing","priority":2,"status":"in_progress","notes":"PR: %s"}]\n' \
+  https://github.com/o/r/pull/1 > "$tmp/bs-beads/widgets-abc.json"
 rm -rf "$W/logs"; : > "$STUB_LOG"; rm -f "$STUB_COUNT"
-out=$( (export STUB_STATS="$BS_STATS" STUB_READY="$BS_READY"; runit "$BIN/hermes-run" 1) 2>&1); rc=$?
+out=$( (export STUB_STATS="$BS_STATS" STUB_READY="$BS_READY" STUB_BEADS="$tmp/bs-beads"; runit "$BIN/hermes-run" 1) 2>&1); rc=$?
 log=$(bs_log)
 eq "beads: start line names the expected next bead and the counts" "$(sed -n 2p "$log")" "$BS_START"
 say "$out" | grep -qF "$BS_START" && grep -qF "] $BS_START" "$W"/logs/run-*.timed.txt \
   && ok "beads: start line is on the terminal and in the timed log" || bad "beads: start terminal/timed" "$out"
-grep -q '^bd ready --json --exclude-type epic --exclude-label owner-present --sort priority --limit 1$' "$STUB_LOG" \
-  && ok "beads: next comes from the agent's own pick command" || bad "beads: pick command" "$(grep '^bd ready' "$STUB_LOG")"
+grep -q '^bd ready --exclude-type epic --exclude-label owner-present --sort priority --limit 1 --json$' "$STUB_LOG" \
+  && grep -qx 'bd show widgets-abc --json' "$STUB_LOG" \
+  && ok "beads: next is the issue picked with the agent's own command" || bad "beads: pick command" "$(grep -E '^bd (ready|show)' "$STUB_LOG")"
 say "$out" | grep -q '^BEADS: worked widgets-abc$' \
   && ok "beads: worked line confirms the claimed bead" || bad "beads: worked line" "$(say "$out" | grep '^BEADS:')"
 say "$out" | grep -q '^BEADS: loop worked 1 issue(s): widgets-abc | closed 7 of 12 | still to do: ready 3, open 5, blocked 2$' \

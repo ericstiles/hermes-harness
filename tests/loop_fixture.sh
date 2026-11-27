@@ -75,6 +75,11 @@ elif args[:1] == ["ready"]:
     if os.environ.get("STUB_READY_FAIL") == "1":
         sys.exit(1)
     skip, only = opt("--exclude-label"), opt("--label-any")
+    if only:
+        with open(os.environ["STUB_LOG"]) as log:
+            reads = sum("--label-any" in line for line in log)
+        if reads <= int(os.environ.get("STUB_WAITING_FAILS") or 0):
+            sys.exit(1)
     ready = sorted(
         (
             b
@@ -89,6 +94,10 @@ elif args[:1] == ["ready"]:
     )
     limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 100
     shown = ready[:limit] if limit else ready
+    late = os.environ.get("STUB_LATE_BEAD")
+    if late and limit == 1 and late not in beads:  # synced in just after this read
+        with open(os.path.join(db, late + ".json"), "w") as f:
+            json.dump({"id": late, "priority": 0, "status": "open", "blocks": []}, f)
     if "--json" in args:
         print(json.dumps([flat(b) for b in shown]))
     else:

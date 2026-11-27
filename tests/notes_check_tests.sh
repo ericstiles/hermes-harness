@@ -79,7 +79,7 @@ rm -rf "$STUB_BEADS"
 nc_run STUB_PR_BODY="Bead: $T"
 [ "$rc" = 0 ] && say "$out" | grep -q '^FINAL_RESULT=OK_DONE$' && say "$out" | grep -q '^warning: notes check skipped' \
   && ok "notes check: unreadable bd show output keeps the original class" || bad "notes check: bad json" "$rc $(echo "$out" | tail -4)"
-nc_run STUB_FIXTURE="$FX/blocked.log" STUB_PR_BODY="Bead: $T"
+nc_run STUB_FIXTURE="$FX/blocked.log" STUB_PR_BODY="Bead: $T" HERMES_CONTINUE_ON_BLOCKED=0
 grep -q '^bd show' "$STUB_LOG" && bad "notes check: ran for a non-OK_DONE run" "$(cat "$STUB_LOG")" \
   || ok "notes check: only OK_DONE runs are checked"
 

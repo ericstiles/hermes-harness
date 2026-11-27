@@ -18,6 +18,8 @@ source_env_if_exists .envrc.local
 # export HERMES_WRAPUP_TIMEOUT=15m       # after a timeout or crash, resume this long to save WIP; 0 = off
 # export HERMES_UNCLAIM_ON_TIMEOUT=1     # after a timeout or crash, release the claim; 0 = keep it
 # export HERMES_RESUME_ON_STOP=1         # resume once when the agent stops mid-issue; 0 = off
+# export HERMES_CONTINUE_ON_BLOCKED=1    # after RUN_BLOCKED, park the issue and go on; 0 = stop
+# export HERMES_MAX_BLOCKED_IN_A_ROW=2   # this many blocked runs in a row stop the loop
 # export HERMES_ARGS="--provider ollama-launch -m qwen3.8:27b-mlx"  # extra `hermes chat` args (default: Hermes' config)
 
 # --- logs and the timed run log ---
@@ -29,7 +31,7 @@ source_env_if_exists .envrc.local
 # export HERMES_CONTEXT_WINDOW=131072    # context window for CONTEXT: (default: looked up, never guessed)
 # export HERMES_CONTEXT_TIMEOUT=30s      # time limit for the session export behind CONTEXT:
 # export HERMES_BASELINE_TIMEOUT=15s     # time limit for `hermes prompt-size` behind CONTEXT: baseline
-# export HERMES_BEADS_TIMEOUT=15s        # time limit for each `bd` read behind BEADS:, the pick, the skip list and the requeue chain
+# export HERMES_BEADS_TIMEOUT=15s        # time limit for each `bd` call: BEADS:, pick, skip list, requeue chain, parking
 
 # --- which issues unattended runs take ---
 # export HERMES_EXCLUDE_LABELS=owner-present  # labels of issues a person must run, comma separated; empty = skip none

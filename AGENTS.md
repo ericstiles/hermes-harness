@@ -126,7 +126,8 @@ only. Interactive sessions keep the Conservative profile.
        `git pull --ff-only origin bd/<id>`. Never reset it: it may hold commits
        that were never pushed. If either command fails (for example the two
        copies have diverged), do not commit, reset or push: run
-       `bd update <id> --status blocked --append-notes "<the git error>"`,
+       `bd update <id> --status blocked --append-notes "BLOCKED: environment:
+       <the git error>. Unblock by: <what a human must do>"`, `bd dolt push`,
        print `RUN_BLOCKED`, and stop.
      - It exists in neither place: create it untracked (a branch that tracks
        `main` can push to `main`): `git switch --no-track -c bd/<id> origin/main`.
@@ -182,8 +183,12 @@ only. Interactive sessions keep the Conservative profile.
      - **Only a human can unblock it** (unclear requirements, missing access, a
        command the sandbox denies): commit WIP to the branch, push it with
        `git push -u origin bd/<id>:refs/heads/bd/<id>` (on a review-fix issue,
-       `git push origin bd/<T>:refs/heads/bd/<T>`), run
-       `bd update <id> --status blocked --append-notes "<why>"`, and print
+       `git push origin bd/<T>:refs/heads/bd/<T>`) and leave
+       `git status --porcelain` empty (the next run works in this same clone).
+       Then run `bd update <id> --status blocked --append-notes "BLOCKED:
+       <kind>: <why>. Unblock by: <what a human must do>"`, where `<kind>` is one
+       of `requirements`, `access`, `sandbox-denied`, `environment` (start the
+       note exactly with `BLOCKED:`), then `bd dolt push`, and print
        `RUN_BLOCKED`. Stop. Don't guess at requirements.
   6. If `hermes-run` resumes you to say the time limit was reached or Hermes
      crashed, do only what that message asks (push WIP, append a `WIP:` note,
@@ -196,7 +201,8 @@ only. Interactive sessions keep the Conservative profile.
      (this creates the branch if the clone lacks it, updates an older copy and
      keeps commits that were never pushed). Never branch from main. If it fails
      (for example the two copies have diverged), do not commit, reset or push:
-     run `bd update <F> --status blocked --append-notes "<the git error>"`,
+     run `bd update <F> --status blocked --append-notes "BLOCKED: environment:
+     <the git error>. Unblock by: <what a human must do>"`, `bd dolt push`,
      print `RUN_BLOCKED`, and stop.
   2. Read the review: `gh pr view <N> --comments` and the issue's checklist.
   3. If a point can only be fixed by fixing what another open bead B describes

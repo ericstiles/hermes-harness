@@ -2,7 +2,8 @@
 """bead_stats: the bead about to be worked and the queue's numbers, as one BEADS: line.
 
     bead_stats.py start   STATS_JSON READY_JSON     # at the start of a run
-    bead_stats.py summary STATS_JSON [ID ...] [--requeued ID->BLOCKERS ...]   # at the loop's end
+    bead_stats.py summary STATS_JSON [ID ...] [--requeued ID->BLOCKERS ...] [--parked ID ...]
+                                                    # at the loop's end
 
 STATS_JSON is `bd stats --json`; READY_JSON is
 `bd ready --json --exclude-type epic --sort priority --limit 1` (with `--exclude-label` for
@@ -12,8 +13,8 @@ the beads the loop's runs claimed. Prints exactly one line:
 
     BEADS: next <id> "<title>" (P<n>) | ready R in_progress I blocked B | open O closed C of T
       | epics ready to close E
-    BEADS: loop worked N issue(s): <ids> [| requeued <id> -> <blockers>; ...] | closed C of T
-      | still to do: ready R, open O, blocked B
+    BEADS: loop worked N issue(s): <ids> [| requeued <id> -> <blockers>; ...] [| parked: <ids>]
+      | closed C of T | still to do: ready R, open O, blocked B
     BEADS: unavailable (<reason>)
 
 Always exits 0: it must never change a run's result. The `BEADS:` prefix matches no
@@ -39,7 +40,7 @@ FIELDS = (
     "epics_eligible_for_closure",
 )
 USAGE = """usage: bead_stats.py start STATS_JSON READY_JSON
-       bead_stats.py summary STATS_JSON [ID ...] [--requeued ID->BLOCKERS ...]
+       bead_stats.py summary STATS_JSON [ID ...] [--requeued ID->BLOCKERS ...] [--parked ID ...]
   STATS_JSON   output of `bd stats --json`
   READY_JSON   output of `bd ready --json --exclude-type epic --sort priority --limit 1`;
                "" when it failed (prints "next unavailable", not "next none")
@@ -126,16 +127,34 @@ def start_line(stats: Stats, nxt: Next | _Unavailable | None) -> str:
     )
 
 
-def summary_line(stats: Stats, worked: list[str], requeued: list[str] | None = None) -> str:
+def summary_line(
+    stats: Stats,
+    worked: list[str],
+    requeued: list[str] | None = None,
+    parked: list[str] | None = None,
+) -> str:
     unique = list(dict.fromkeys(i for i in worked if i))
     ids = " ".join(unique) if unique else "none"
     pairs = "; ".join(p.replace("->", " -> ") for p in requeued or [])
     moved = f"requeued {pairs} | " if pairs else ""
+    held = f"parked: {' '.join(parked)} | " if parked else ""
     return (
-        f"{PREFIX} loop worked {len(unique)} issue(s): {ids} | {moved}closed {stats.closed} of "
-        f"{stats.total} | still to do: ready {stats.ready}, open {stats.open}, "
-        f"blocked {stats.blocked}"
+        f"{PREFIX} loop worked {len(unique)} issue(s): {ids} | {moved}{held}"
+        f"closed {stats.closed} of {stats.total} | still to do: ready {stats.ready}, "
+        f"open {stats.open}, blocked {stats.blocked}"
     )
+
+
+def split_summary(args: list[str]) -> dict[str, list[str]]:
+    """The summary's arguments by the flag they follow ("" = the worked ids)."""
+    groups: dict[str, list[str]] = {"": [], "--requeued": [], "--parked": []}
+    flag = ""
+    for arg in args:
+        if arg in groups:
+            flag = arg
+        else:
+            groups[flag] = [*groups[flag], arg]
+    return groups
 
 
 def main(argv: list[str]) -> str:
@@ -144,9 +163,8 @@ def main(argv: list[str]) -> str:
         nxt = parse_next(argv[2]) if argv[2] else NEXT_UNAVAILABLE
         return start_line(parse_stats(argv[1]), nxt)
     if len(argv) >= 2 and argv[0] == "summary":
-        rest = argv[2:]
-        cut = rest.index("--requeued") if "--requeued" in rest else len(rest)
-        return summary_line(parse_stats(argv[1]), rest[:cut], rest[cut + 1 :])
+        got = split_summary(argv[2:])
+        return summary_line(parse_stats(argv[1]), got[""], got["--requeued"], got["--parked"])
     raise ValueError("usage: start STATS READY | summary STATS [ID ...]")
 
 

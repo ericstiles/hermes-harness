@@ -26,7 +26,8 @@ for pair in timeout_killed:TIMEOUT blocked:BLOCKED queue_empty:QUEUE_EMPTY model
             beads_sync:BEADS_SYNC_ERROR auth_error:AUTH_ERROR sandbox_down:SANDBOX_DOWN ok_done:OK_DONE \
             trap_test_404_and_aux_timeout:OK_DONE trap_sentinel_in_prose:OK_DONE trap_sync_in_prose:OK_DONE; do
   n=${pair%%:*}; want=${pair##*:}; rm -rf "$W/logs"
-  STUB_FIXTURE="$FX/$n.log" runit "$BIN/hermes-run" 1 >/dev/null 2>&1
+  # parking (yiv) would add its own lines after a blocked run's result: not what this compares
+  HERMES_CONTINUE_ON_BLOCKED=0 STUB_FIXTURE="$FX/$n.log" runit "$BIN/hermes-run" 1 >/dev/null 2>&1
   { base_of "$(only_log)"; beads_of "$(only_log)"; prov_of "$(only_log)"; cat "$FX/$n.log"; echo "STOP_REASON: unknown"; ctx_of "$(only_log)"; echo "RUN_RESULT=$want"; } > "$tmp/want_raw"
   cmp -s "$tmp/want_raw" "$(only_log)" || { same=no; diffs="$diffs $n"; }
 done

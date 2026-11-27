@@ -42,16 +42,23 @@
 #   HERMES_STALL_WARN=10m        print "no output for 10m (last: HH:MM:SS)" to the terminal and
 #                                the timed log (never the raw log) after this much silence,
 #                                again each further interval; 0 = off
+#   HERMES_EXCLUDE_LABELS=owner-present  comma separated labels of issues a person must run:
+#                                never picked, listed once per launch ("PICK: skipping ...");
+#                                empty = skip nothing
 #   HERMES_RESUME_ON_STOP=1      when the agent ends its turn mid-issue (no PR, no
 #                                RUN_BLOCKED/RUN_REQUEUED/NO_READY_WORK: class AGENT_STOPPED),
 #                                resume that same session ONCE; 0 disables
+#
+# The pick (bead 66y): hermes-run chooses the issue before every run and the prompt names it
+# ("Work issue <id>"): the requeue chain's, else the first ready issue by priority without an
+# excluded label. With nothing to name, the prompt gives the pick command that excludes them.
 #
 # Blocked by another bead (bead 35r): the agent adds the edge, releases its claim and prints
 # RUN_REQUEUED (class REQUEUED). The loop checks that on the host (open, unassigned, an open
 # `blocks` edge, no cycle, once per launch; else BLOCKED) and keeps going. Before every run, in
 # this launch and later ones, it reads the requeued issues from beads: one whose blockers are
 # closed is worked first, else its deepest ready blocker or a blocker's review fix, else the
-# normal pick. "REQUEUE CHAIN:" lines in the run log say why (lib/requeue.sh). A needs-a-human
+# first ready issue. "REQUEUE CHAIN:" lines in the run log say why (lib/requeue.sh). A needs-a-human
 # blocker stays RUN_BLOCKED and stops the loop.
 #
 # Every run's log ends with a line  RUN_RESULT=<CLASS>  (see lib/classify.sh)
@@ -115,6 +122,12 @@ EXTEND_CAP=${HERMES_EXTEND_CAP:-180m}
 export HERMES_HARNESS_RUN=1
 : "${GH_TOKEN:?export GH_TOKEN (fine-grained, this repo only)}"
 
+# Labels of the issues left for a person (66y); an invalid setting refuses the run here, before
+# anything is written. skip_args is what every `bd ready` that picks work gets.
+skip_labels=$(hh_exclude_labels) || exit 2
+skip_args=()
+[ -z "$skip_labels" ] || skip_args=(--exclude-label "$skip_labels")
+
 # The time limit is enforced by lib/watchdog.py (exit 124 like timeout(1)), not timeout(1).
 WATCHDOG="$HARNESS_HOME/lib/watchdog.py"
 
@@ -149,10 +162,13 @@ or after printing RUN_BLOCKED, RUN_REQUEUED or NO_READY_WORK on its own line."
 PROMPT_HEAD="Follow AGENTS.md \"Autonomous Beads workflow\" for the repo in /workspace/$NAME \
 (clone $REPO with gh if missing; otherwise run: git fetch origin && git checkout --detach origin/main \
 ; never discard uncommitted changes: if git refuses, keep them and go on)."
-PROMPT="$PROMPT_HEAD Do one issue, then stop. $NO_HUMAN"
-chain_prompt() { # <issue id> -> the prompt of a run that must work that issue (the requeue chain)
+# Step 1's command, said in the prompt: the target repo's AGENTS.md may be older, or the labels set.
+PICK_RULE="pick with exactly this command and take the FIRST item: \`bd ready --json \
+--exclude-type epic${skip_labels:+ --exclude-label $skip_labels} --sort priority\`"
+PROMPT="$PROMPT_HEAD In step 1, $PICK_RULE. Do one issue, then stop. $NO_HUMAN"
+named_prompt() { # <issue id> -> the prompt of a run whose issue hermes-run has picked
   printf '%s' "$PROMPT_HEAD Work issue $1 instead of the pick in step 1 (only if bd ready does \
-not list it after bd dolt pull, pick as step 1 says). Do one issue, then stop. $NO_HUMAN"
+not list it after bd dolt pull, $PICK_RULE). Do one issue, then stop. $NO_HUMAN"
 }
 # Sent when resuming a session that ended its turn mid-issue (class AGENT_STOPPED).
 RESUME_PROMPT="$NO_HUMAN Continue the issue you already claimed, from where you stopped, \
@@ -264,11 +280,11 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   # The BEADS: line (9jj) follows it: the bead the agent is expected to pick, and the queue.
   # Every run, resumed ones too, then records its effective provider (RUN_PROVIDER:): hermes-supervise
   # checks that provider's endpoint after a MODEL_API_ERROR (b80); HERMES_ARGS may override config.
-  # The REQUEUE CHAIN: lines (35r) say why this run's issue was chosen, or why none was.
-  local baseline="" beads="" chain=""
-  [ -n "${2:-}" ] || { baseline=$(baseline_line); beads=$(beads_start_line); chain=${chain_log:-}; }
+  # The REQUEUE CHAIN: (35r) and PICK: (66y) lines say why this run's issue was chosen or skipped.
+  local baseline="" beads="" why=""
+  [ -n "${2:-}" ] || { baseline=$(baseline_line); beads=$(beads_start_line); why=${pick_log:-}; }
   { [ -z "$baseline" ] || printf '%s\n' "$baseline"
-    [ -z "$chain" ] || printf '%s\n' "$chain"
+    [ -z "$why" ] || printf '%s\n' "$why"
     [ -z "$beads" ] || printf '%s\n' "$beads"
     printf 'RUN_PROVIDER: %s\n' "${PROVIDER:-unknown}"
     python3 -u "$WATCHDOG" --limit "$1" --extend "$extend" --cap "$cap" --log "$log" -- \
@@ -338,7 +354,8 @@ _beads_line() { # start | summary [id ...]
     # A failed or timed-out `bd ready` passes "" (next unavailable); "[]" would read as an empty queue.
     # On the requeue chain the harness has already chosen: show that bead instead.
     if [ -n "${chain_pick:-}" ]; then ready=$(_beads_bd show "$chain_pick" --json) || ready=""
-    elif ready=$(_beads_bd ready --json --exclude-type epic --sort priority --limit 1); then ready=${ready:-[]}
+    elif ready=$(_beads_bd ready --json --exclude-type epic ${skip_args[@]+"${skip_args[@]}"} \
+      --sort priority --limit 1); then ready=${ready:-[]}
     else ready=""; fi
     line=$(python3 "$HARNESS_HOME/lib/bead_stats.py" start "$stats" "$ready" 2>/dev/null | head -n 1)
   else
@@ -462,6 +479,13 @@ requeue_check() {
   esac
   requeue_say "REQUEUE CHAIN: $id is open again; it is taken first once $blockers is closed (its PR merged)"
 }
+# Lines saying why this run's issue was chosen or skipped; run_once writes them into its log.
+add_pick_log() { # <lines, may be empty>
+  [ -n "$1" ] || return 0
+  [ -z "$pick_log" ] || pick_log="$pick_log
+"
+  pick_log="$pick_log$1"
+}
 # At the loop's end: what is still waiting and what the next launch will start with.
 requeue_state() {
   local line
@@ -498,17 +522,20 @@ harness_changed() { # <changed paths> <next run number>: say why, mark the last 
 }
 
 final=OK_DONE; WORKED=""  # beads claimed by this loop's main runs (BEADS: summary)
-requeued_pairs=""; chain_pick=""; chain_log=""; iter_prompt="" # "<id>-><blockers>" accepted; this run's pick
+requeued_pairs=""; chain_pick=""; pick_log=""; iter_prompt="" # "<id>-><blockers>" accepted; this run's pick
+waiting_line="" # the issues skipped for a person: said once per launch
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
   if [ "$i" -gt 1 ] && changed=$(hh_code_changes "$HARNESS_HOME" "$CODE_STAMP"); then
     harness_changed "$changed" "$i"
   fi
   stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
-  # The requeue chain, from beads: which issue this run must work, and why (35r).
+  # Which issue this run works, and why: the requeue chain (35r), else the first ready one (66y).
   bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; picking from local beads"
-  hh_chain_pick; chain_pick=$HH_CHAIN_PICK; chain_log=$HH_CHAIN_LOG; iter_prompt=""
-  [ -z "$chain_pick" ] || iter_prompt=$(chain_prompt "$chain_pick")
+  hh_chain_pick; chain_pick=$HH_CHAIN_PICK; pick=$chain_pick; pick_log=$HH_CHAIN_LOG; iter_prompt=""
+  if [ -z "$pick" ]; then hh_normal_pick; pick=$HH_PICK; add_pick_log "$HH_PICK_LOG"; fi
+  if [ -z "$waiting_line" ]; then waiting_line=$(hh_waiting_line); add_pick_log "$waiting_line"; fi
+  [ -z "$pick" ] || iter_prompt=$(named_prompt "$pick")
   run_once "$TIMEOUT"; claim_log=$log
   worked=$(claimed_issue "$claim_log"); echo "BEADS: worked ${worked:-none}"
   [ -n "$worked" ] && WORKED="${WORKED:+$WORKED }$worked"

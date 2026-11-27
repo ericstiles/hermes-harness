@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """requeue: reads the beads dependency graph for hermes-run's requeue chain (bead 35r).
 
-    requeue.py check ID   # may the loop requeue ID? -> OK <blocker ids,> | REFUSED <why>
-    requeue.py walk ID    # what to work on ID's chain -> PICK <id> | NONE | CLOSED
-                          #   | CYCLE <a -> b -> a> | ERROR <why>
+    requeue.py check ID   # may the loop requeue ID? -> OK <blocker,ids> [UNNOTED] | REFUSED <why>
+    requeue.py pick       # what the next run should work -> "LOG <explanation>" lines, then
+                          #   PICK <id> | NONE
 
-Blockers are the dependencies of type `blocks` that are not closed (parent-child and
-discovered-from do not block). Read-only: it only runs `bd show` and `bd ready`, each under
-HERMES_BEADS_TIMEOUT (15s). Prints exactly one line and exits 0. Python 3.9+, stdlib only.
+The chain is rebuilt from beads every time, so it survives launches: every open issue with a
+`REQUEUED: blocked by` note and a `blocks` dependency. Order: a requeued issue whose blockers are
+all closed; else, per requeued issue (priority, then id), depth-first over its open blockers, the
+first ready one, or the ready review fix of one that is not ready. Blockers are dependencies of
+type `blocks` that are not closed (parent-child and discovered-from do not block). Read-only: only
+`bd show`, `bd ready` and `bd list`, each under HERMES_BEADS_TIMEOUT (15s). Exits 0. Python 3.9+,
+stdlib only.
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ from dataclasses import dataclass
 
 DEFAULT_TIMEOUT = 15.0
 UNITS = {"": 1, "s": 1, "m": 60, "h": 3600}
+NOTE = "REQUEUED: blocked by"  # the start of the note line the workflow has the agent append
+REVIEW_FIX = "review-fix"
 
 
 class BeadsError(RuntimeError):
@@ -34,9 +40,24 @@ class Bead:
     status: str
     assignee: str
     blockers: tuple[str, ...]  # open ones, in priority then id order
+    noted: bool  # has the REQUEUED note
+
+
+@dataclass(frozen=True)
+class Queue:
+    ready: frozenset[str]
+    fixes: dict[str, tuple[str, ...]]  # ticket id -> its ready review-fix issues
 
 
 Fetch = Callable[[str], Bead]
+
+
+def has_note(data: dict) -> bool:
+    return any(line.startswith(NOTE) for line in str(data.get("notes") or "").splitlines())
+
+
+def _rank(item: dict, key: str = "id") -> tuple:
+    return item.get("priority", 99), item[key]
 
 
 def parse_bead(data: object) -> Bead:
@@ -47,36 +68,61 @@ def parse_bead(data: object) -> Bead:
             for d in data.get("dependencies") or []
             if d["dependency_type"] == "blocks" and d["status"] != "closed"
         ]
-        ordered = sorted(open_deps, key=lambda d: (d.get("priority", 99), d["id"]))
         return Bead(
             str(data["id"]),
             str(data["status"]),
             str(data.get("assignee") or ""),
-            tuple(str(d["id"]) for d in ordered),
+            tuple(str(d["id"]) for d in sorted(open_deps, key=_rank)),
+            has_note(data),
         )
     except (AttributeError, KeyError, TypeError):
         raise BeadsError("unexpected bead JSON") from None
 
 
-def find(root: str, fetch: Fetch, ready: frozenset[str]) -> tuple[str, str]:
-    """Depth-first over root's open blockers: the first ready bead, deepest first.
+def parse_queue(items: list) -> Queue:
+    """`bd ready --json`: the ready ids, and the ready review fixes by the ticket they fix."""
+    try:
+        fixes: dict[str, tuple[str, ...]] = {}
+        for item in sorted(items, key=_rank):
+            if REVIEW_FIX not in (item.get("labels") or []):
+                continue
+            for dep in item.get("dependencies") or []:
+                if dep["type"] == "discovered-from":
+                    ticket = str(dep["depends_on_id"])
+                    fixes[ticket] = (*fixes.get(ticket, ()), str(item["id"]))
+        return Queue(frozenset(str(i["id"]) for i in items), fixes)
+    except (AttributeError, KeyError, TypeError):
+        raise BeadsError("unexpected `bd ready` JSON") from None
 
-    Returns ("PICK", id), ("CYCLE", "a -> b -> a") or ("NONE", "").
-    """
+
+def parse_requeued(items: list) -> list[str]:
+    """`bd list` output -> the requeued issues: the note line and a `blocks` edge, best first."""
+    try:
+        found = [
+            i
+            for i in items
+            if has_note(i) and any(d["type"] == "blocks" for d in i.get("dependencies") or [])
+        ]
+        return [str(i["id"]) for i in sorted(found, key=_rank)]
+    except (AttributeError, KeyError, TypeError):
+        raise BeadsError("unexpected `bd list` JSON") from None
+
+
+def find_cycle(root: str, fetch: Fetch) -> str:
+    """Return the cycle in root's open blockers as `a -> b -> a`, else an empty string."""
     done: set[str] = set()
 
-    def visit(bead_id: str, path: tuple[str, ...]) -> tuple[str, str]:
+    def visit(bead_id: str, path: tuple[str, ...]) -> str:
         if bead_id in path:
-            cycle = (*path[path.index(bead_id) :], bead_id)
-            return "CYCLE", " -> ".join(cycle)
+            return " -> ".join((*path[path.index(bead_id) :], bead_id))
         if bead_id in done:
-            return "NONE", ""
+            return ""
         for blocker in fetch(bead_id).blockers:
-            result = visit(blocker, (*path, bead_id))
-            if result[0] != "NONE":
-                return result
+            cycle = visit(blocker, (*path, bead_id))
+            if cycle:
+                return cycle
         done.add(bead_id)
-        return ("PICK", bead_id) if bead_id in ready else ("NONE", "")
+        return ""
 
     return visit(root, ())
 
@@ -89,17 +135,69 @@ def check(root: str, fetch: Fetch) -> str:
         return f"REFUSED {root} is still assigned to {bead.assignee}"
     if not bead.blockers:
         return f"REFUSED {root} has no open blocker (bd dep add {root} <blocker>)"
-    kind, detail = find(root, fetch, frozenset())
-    if kind == "CYCLE":
-        return f"REFUSED dependency cycle: {detail}"
-    return "OK " + ",".join(bead.blockers)
+    cycle = find_cycle(root, fetch)
+    if cycle:
+        return f"REFUSED dependency cycle: {cycle}"
+    return "OK " + ",".join(bead.blockers) + ("" if bead.noted else " UNNOTED")
 
 
-def walk(root: str, fetch: Fetch, ready: Callable[[], frozenset[str]]) -> str:
-    if fetch(root).status == "closed":
-        return "CLOSED"
-    kind, detail = find(root, fetch, ready())
-    return f"{kind} {detail}".rstrip()
+def describe(bead: Bead) -> str:
+    """Why a chain member with nothing under it cannot be worked now."""
+    if bead.status == "in_progress":
+        who = f", claimed by {bead.assignee}" if bead.assignee else ""
+        return f"is in_progress{who} (being worked, or its PR waits for review)"
+    if bead.status == "blocked":
+        return f"is blocked: needs a human (bd show {bead.id})"
+    if bead.status == "open":
+        return "is open but bd ready does not list it (deferred, or its epic is blocked)"
+    return f"is {bead.status}"
+
+
+def pick(requeued: list[str], fetch: Fetch, queue: Queue) -> tuple[list[str], str]:
+    """The explanation lines and the id to work next ("" = the agent's normal pick)."""
+    if not requeued:
+        return [], ""
+    log = [f"{len(requeued)} requeued issue(s) still to be finished: {' '.join(requeued)}"]
+    for root in requeued:
+        if root in queue.ready:
+            log.append(f"next pick: {root} (it was requeued and its blockers are closed)")
+            return log, root
+    seen: set[str] = set()
+
+    def follow(bead_id: str, path: tuple[str, ...]) -> str:
+        chain = " -> ".join((*path, bead_id))
+        if bead_id in path:
+            cycle = " -> ".join((*path[path.index(bead_id) :], bead_id))
+            log.append(f"dependency cycle {cycle}: needs a human (bd dep remove); chain skipped")
+            return ""
+        if bead_id in seen:
+            return ""
+        seen.add(bead_id)
+        bead = fetch(bead_id)
+        for blocker in bead.blockers:
+            log.append(f"{bead_id} waits on {blocker}")
+            found = follow(blocker, (*path, bead_id))
+            if found:
+                return found
+        if path and bead_id in queue.ready:
+            log.append(f"next pick: {bead_id} (a ready blocker; chain {chain})")
+            return bead_id
+        for fix in queue.fixes.get(bead_id, ()):
+            log.append(f"next pick: {fix} (a review fix of {bead_id}; chain {chain} -> {fix})")
+            return fix
+        if not bead.blockers:
+            log.append(f"{bead_id} {describe(bead)}")
+        return ""
+
+    for root in requeued:
+        found = follow(root, ())
+        if found:
+            return log, found
+    log.append(
+        "nothing on these chains is ready: picking as usual. A requeued issue is taken first "
+        "once its blockers are closed (a blocker closes when its PR is merged)"
+    )
+    return log, ""
 
 
 def _timeout() -> float:
@@ -115,7 +213,7 @@ def _bd_json(*args: str) -> list:
         )
         if run.returncode != 0:
             raise BeadsError(f"{label} failed (exit {run.returncode})")
-        data = json.loads(run.stdout)
+        data = json.loads(run.stdout.strip() or "[]")  # no output: nothing found
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
         raise BeadsError(f"{label} failed ({type(exc).__name__})") from None
     if not isinstance(data, list):
@@ -137,9 +235,18 @@ def bd_fetch() -> Fetch:
     return fetch
 
 
-def bd_ready() -> frozenset[str]:
-    items = _bd_json("ready", "--exclude-type", "epic", "--limit", "0")
-    return frozenset(str(i.get("id")) for i in items if isinstance(i, dict))
+def next_pick() -> list[str]:
+    """The output lines of `requeue.py pick`."""
+    try:
+        listed = _bd_json("list", "--status=open", "--notes-contains", NOTE, "--limit", "0")
+        requeued = parse_requeued(listed)
+        if not requeued:
+            return ["NONE"]
+        queue = parse_queue(_bd_json("ready", "--exclude-type", "epic", "--limit", "0"))
+        log, chosen = pick(requeued, bd_fetch(), queue)
+    except BeadsError as exc:
+        log, chosen = [f"could not read the requeue chain ({exc}): picking as usual"], ""
+    return [*(f"LOG {line}" for line in log), f"PICK {chosen}" if chosen else "NONE"]
 
 
 def main(argv: list[str]) -> str:
@@ -148,12 +255,9 @@ def main(argv: list[str]) -> str:
             return check(argv[1], bd_fetch())
         except BeadsError as exc:
             return f"REFUSED {exc}"
-    if len(argv) == 2 and argv[0] == "walk":
-        try:
-            return walk(argv[1], bd_fetch(), bd_ready)
-        except BeadsError as exc:
-            return f"ERROR {exc}"
-    raise SystemExit("usage: requeue.py check ID | walk ID")
+    if argv == ["pick"]:
+        return "\n".join(next_pick())
+    raise SystemExit("usage: requeue.py check ID | pick")
 
 
 if __name__ == "__main__":

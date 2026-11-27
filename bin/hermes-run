@@ -48,9 +48,11 @@
 #
 # Blocked by another bead (bead 35r): the agent adds the edge, releases its claim and prints
 # RUN_REQUEUED (class REQUEUED). The loop checks that on the host (open, unassigned, an open
-# `blocks` edge, no cycle, once per launch; else BLOCKED), keeps going, and tells the next runs
-# to work that issue's blocker chain, deepest ready blocker first, then the issue itself
-# (lib/requeue.sh). A needs-a-human blocker stays RUN_BLOCKED and stops the loop.
+# `blocks` edge, no cycle, once per launch; else BLOCKED) and keeps going. Before every run, in
+# this launch and later ones, it reads the requeued issues from beads: one whose blockers are
+# closed is worked first, else its deepest ready blocker or a blocker's review fix, else the
+# normal pick. "REQUEUE CHAIN:" lines in the run log say why (lib/requeue.sh). A needs-a-human
+# blocker stays RUN_BLOCKED and stops the loop.
 #
 # Every run's log ends with a line  RUN_RESULT=<CLASS>  (see lib/classify.sh)
 # so hermes-supervise can parse the outcome instead of grepping prose.
@@ -84,7 +86,7 @@ cd "$REPO_ROOT" || exit 2
 # shellcheck source=../lib/epics.sh
 . "$HARNESS_HOME/lib/epics.sh"
 # shellcheck source=../lib/requeue.sh
-. "$HARNESS_HOME/lib/requeue.sh" # hh_requeue_accept / hh_chain_pick: the blocker chain (bead 35r)
+. "$HARNESS_HOME/lib/requeue.sh" # hh_requeue_accept / hh_chain_pick: the requeue chain (bead 35r)
 # shellcheck source=../lib/code_stamp.sh
 . "$HARNESS_HOME/lib/code_stamp.sh" # hh_code_stamp: stop between runs when the harness code changed
 
@@ -135,9 +137,9 @@ trap 'rm -rf "$LOCK"' EXIT
 # 2026-11-24: the PR link went to organize_music-b8p.25 instead of organize_music-225).
 # Emptied at the start of each iteration; resumed and wrap-up sessions share it.
 export HERMES_HARNESS_CLAIMS="$LOCK/claims"
-# The requeue chain of this launch (lib/requeue.sh); removed with the lock when the loop ends.
-REQUEUE_STACK="$LOCK/requeue_stack"; REQUEUE_HISTORY="$LOCK/requeued"
-: > "$REQUEUE_STACK"; : > "$REQUEUE_HISTORY"
+# The issues this launch requeued (once each); removed with the lock when the loop ends. The chain
+# itself is read from beads (lib/requeue.sh), so it outlives the launch.
+REQUEUE_HISTORY="$LOCK/requeued"; : > "$REQUEUE_HISTORY"
 
 docker info >/dev/null 2>&1 || { echo "Docker daemon not running (try: colima start)" >&2; echo "RUN_RESULT=SANDBOX_DOWN"; exit 2; }
 
@@ -259,8 +261,11 @@ run_once() { # <timeout> [session-id-to-resume [prompt]]   (a custom prompt = wr
   # The BEADS: line (9jj) follows it: the bead the agent is expected to pick, and the queue.
   # Every run, resumed ones too, then records its effective provider (RUN_PROVIDER:): hermes-supervise
   # checks that provider's endpoint after a MODEL_API_ERROR (b80); HERMES_ARGS may override config.
-  local baseline="" beads=""; [ -n "${2:-}" ] || { baseline=$(baseline_line); beads=$(beads_start_line); }
+  # The REQUEUE CHAIN: lines (35r) say why this run's issue was chosen, or why none was.
+  local baseline="" beads="" chain=""
+  [ -n "${2:-}" ] || { baseline=$(baseline_line); beads=$(beads_start_line); chain=${chain_log:-}; }
   { [ -z "$baseline" ] || printf '%s\n' "$baseline"
+    [ -z "$chain" ] || printf '%s\n' "$chain"
     [ -z "$beads" ] || printf '%s\n' "$beads"
     printf 'RUN_PROVIDER: %s\n' "${PROVIDER:-unknown}"
     python3 -u "$WATCHDOG" --limit "$1" --extend "$extend" --cap "$cap" --log "$log" -- \
@@ -422,29 +427,54 @@ save_and_release() { # <log with the claim> [session id]
   unclaim_stale "$1"
 }
 
-# A REQUEUED run (bead 35r): trust it only if the host's beads agree. Accepted: the id joins the
-# chain stack and the loop goes on. Refused: the run becomes BLOCKED, and the loop stops.
-requeue_check() {
-  local id out
-  id=$(claimed_issue "${claim_log:-$log}")
-  bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; checking the requeue against local beads"
-  if out=$(hh_requeue_accept "$REQUEUE_STACK" "$REQUEUE_HISTORY" "$id"); then
-    requeued_pairs="${requeued_pairs:+$requeued_pairs }$id->$out"
-    echo "REQUEUE: $id blocked by $out" | tee -a "$log"
-  else
-    refuse_requeue "$out"
-  fi
+# A line about the requeue chain: to the terminal, the last run log and its timed twin.
+requeue_say() { # <line>
+  echo "$1" | tee -a "$log"
+  hh_stamp_line "$1" "$STAMP_ID" >> "$timed" 2>/dev/null || true
 }
-refuse_requeue() { # <why>: mark the last run BLOCKED (hermes-supervise then asks the human)
-  class=BLOCKED
-  { echo "REQUEUE_REFUSED: $1"; echo "RUN_RESULT=BLOCKED"; } | tee -a "$log"
-  hh_stamp_line "RUN_RESULT=BLOCKED" "$STAMP_ID" >> "$timed" 2>/dev/null || true
+# A REQUEUED run (bead 35r): trust it only if the host's beads agree. Accepted: the loop goes on
+# (later picks read the chain from beads). Refused: the run becomes BLOCKED, and the loop stops.
+requeue_check() {
+  local id out blockers
+  id=$(claimed_issue "${claim_log:-$log}")
+  bd dolt pull >/dev/null 2>&1 || requeue_say "warning: bd dolt pull failed; checking the requeue against local beads"
+  if ! out=$(hh_requeue_accept "$REQUEUE_HISTORY" "$id"); then
+    class=BLOCKED
+    requeue_say "REQUEUE_REFUSED: $out"
+    requeue_say "REQUEUE CHAIN: the run counts as BLOCKED; beads are left as the agent left them (bd show ${id:-<id>})"
+    requeue_say "RUN_RESULT=BLOCKED"
+    return 0
+  fi
+  blockers=${out%% *}
+  requeued_pairs="${requeued_pairs:+$requeued_pairs }$id->$blockers"
+  requeue_say "REQUEUE: $id blocked by $blockers"
+  case $out in
+    *" UNNOTED") # the note is what later launches find the issue by
+      if bd update "$id" --append-notes "REQUEUED: blocked by $blockers (note added by hermes-run)" >/dev/null 2>&1; then
+        requeue_say "REQUEUE CHAIN: $id had no REQUEUED note; added it so later launches remember it"
+        bd dolt push >/dev/null 2>&1 || requeue_say "warning: bd dolt push failed (the note is local only)"
+      else
+        requeue_say "warning: could not add the REQUEUED note to $id; later picks will not give it priority"
+      fi ;;
+  esac
+  requeue_say "REQUEUE CHAIN: $id is open again; it is taken first once $blockers is closed (its PR merged)"
+}
+# At the loop's end: what is still waiting and what the next launch will start with.
+requeue_state() {
+  local line
+  hh_chain_pick
+  [ -n "$HH_CHAIN_LOG" ] && [ -n "${log:-}" ] || return 0
+  requeue_say "REQUEUE CHAIN: state at the end of this loop (the next launch starts from it):"
+  while IFS= read -r line; do requeue_say "$line"; done <<EOF
+$HH_CHAIN_LOG
+EOF
 }
 
 # The loop's end: summary lines, then exit by the final result. A function, so a loop that stops
 # because its code changed (harness_changed) never reads the rest of this file from disk again.
 loop_epilogue() {
   loop_end=$(date +%s)
+  requeue_state
   _beads_line summary ${WORKED:-} ${requeued_pairs:+--requeued $requeued_pairs}
   echo "RUN_TIME total=$(hh_elapsed $((loop_end - loop_start))) start=$(hh_hms "$loop_start") end=$(hh_hms "$loop_end") runs=$runs"
   echo "FINAL_RESULT=$final"
@@ -465,26 +495,17 @@ harness_changed() { # <changed paths> <next run number>: say why, mark the last 
 }
 
 final=OK_DONE; WORKED=""  # beads claimed by this loop's main runs (BEADS: summary)
-requeued_pairs=""; chain_pick=""; iter_prompt="" # "<id>-><blockers>" accepted so far; this run's chosen id
+requeued_pairs=""; chain_pick=""; chain_log=""; iter_prompt="" # "<id>-><blockers>" accepted; this run's pick
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
   if [ "$i" -gt 1 ] && changed=$(hh_code_changes "$HARNESS_HOME" "$CODE_STAMP"); then
     harness_changed "$changed" "$i"
   fi
   stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
-  chain_pick=""; iter_prompt=""
-  if [ -s "$REQUEUE_STACK" ]; then
-    bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; picking from local beads"
-    if ! chain_pick=$(hh_chain_pick "$REQUEUE_STACK"); then
-      refuse_requeue "dependency cycle: $chain_pick"
-      echo "Issue blocked — stopping. See $log"; final=BLOCKED; break
-    fi
-    if [ -n "$chain_pick" ]; then
-      echo "Requeue chain: the next run works $chain_pick."; iter_prompt=$(chain_prompt "$chain_pick")
-    else
-      echo "Requeue chain: nothing on it is ready; the next run picks as usual."
-    fi
-  fi
+  # The requeue chain, from beads: which issue this run must work, and why (35r).
+  bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; picking from local beads"
+  hh_chain_pick; chain_pick=$HH_CHAIN_PICK; chain_log=$HH_CHAIN_LOG; iter_prompt=""
+  [ -z "$chain_pick" ] || iter_prompt=$(chain_prompt "$chain_pick")
   run_once "$TIMEOUT"; claim_log=$log
   worked=$(claimed_issue "$claim_log"); echo "BEADS: worked ${worked:-none}"
   [ -n "$worked" ] && WORKED="${WORKED:+$WORKED }$worked"

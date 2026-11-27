@@ -118,13 +118,16 @@ only. Interactive sessions keep the Conservative profile.
   3. `git fetch origin`. If the issue's notes have a `WIP:` line (an earlier run
      ran out of time or crashed and saved its work), read it first and, when
      `origin/bd/<id>` exists, continue on it: `git checkout -B bd/<id> origin/bd/<id>`.
-     Otherwise branch `bd/<id>` from `origin/main`. Implement test-first, then
+     Otherwise create it untracked (a branch that tracks `main` can push to
+     `main`): `git switch --no-track -c bd/<id> origin/main`.
+     Implement test-first, then
      run the quality gate given in `AGENTS_LOCAL.md`.
      At each milestone (tests written, tests pass) run
      `bd update <id> --append-notes "PROGRESS: <milestone>"`: the harness's time
      limit is extended while files are written, commits made or such notes added.
      Scratch files in `/tmp` do not count.
-  4. If tests pass: commit, push the branch, open a PR with `gh pr create`
+  4. If tests pass: commit, push with
+     `git push -u origin bd/<id>:refs/heads/bd/<id>`, open a PR with `gh pr create`
      (base `main`) titled `<type>(<id>): <summary>` (e.g. `fix(<id>): ...`)
      with these lines in the body: `Bead: <id>` and
      `Hermes-Session: <your session id>` (from your system prompt; if it is
@@ -148,12 +151,13 @@ only. Interactive sessions keep the Conservative profile.
        3. Leave nothing uncommitted: the next run works in this same clone.
           Delete your scratch files first.
           - Changes but no `bd/<id>` branch yet:
-            `git checkout -b bd/<id> origin/main` (your changes come along).
+            `git switch --no-track -c bd/<id> origin/main` (your changes come
+            along).
           - No `bd/<id>` branch and no changes: go to step 4.
           - On the branch, if `git status --porcelain` lists anything:
             `git add -A && git commit -m "wip(<id>): <summary>"`.
-          - Then, if `git log origin/main..bd/<id>` lists commits: push the
-            branch, and
+          - Then, if `git log origin/main..bd/<id>` lists commits:
+            `git push -u origin bd/<id>:refs/heads/bd/<id>`, and
             `bd update <id> --append-notes "WIP: bd/<id> - <what is done>"`.
           - If it lists none: delete the empty branch
             (`git checkout --detach origin/main && git branch -d bd/<id>`).
@@ -165,7 +169,9 @@ only. Interactive sessions keep the Conservative profile.
           nothing. Then print `RUN_REQUEUED`. Stop. Do not start the blocker:
           `hermes-run` gives it to a later run.
      - **Only a human can unblock it** (unclear requirements, missing access, a
-       command the sandbox denies): commit WIP to the branch, push it, run
+       command the sandbox denies): commit WIP to the branch, push it with
+       `git push -u origin bd/<id>:refs/heads/bd/<id>` (on a review-fix issue,
+       `git push origin bd/<T>`), run
        `bd update <id> --status blocked --append-notes "<why>"`, and print
        `RUN_BLOCKED`. Stop. Don't guess at requirements.
   6. If `hermes-run` resumes you to say the time limit was reached or Hermes

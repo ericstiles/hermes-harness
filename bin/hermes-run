@@ -164,7 +164,7 @@ wrapup_prompt() { # <issue id or empty> <why the session is being wrapped up>
   printf '%s' "No human is present; never ask a question. $2 This session gets only a few more \
 minutes, so do NOT continue the implementation: save your progress for the next run, in as few \
 terminal commands as possible. (1) In /workspace/$NAME, if branch bd/$id has uncommitted or \
-unpushed changes, commit them as \"wip($id): <summary>\" and git push origin bd/$id (never main, \
+unpushed changes, commit them as \"wip($id): <summary>\" and git push origin bd/$id:refs/heads/bd/$id (never main, \
 never force-push). (2) bd update $id --append-notes \"WIP: <bd/$id if pushed, else none> - <what \
 is done, what you found out, the next step>\", then bd dolt push. Do not close, unclaim or block \
 the issue. Then print RUN_WIP_SAVED on its own line and stop."

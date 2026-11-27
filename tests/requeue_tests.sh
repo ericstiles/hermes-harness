@@ -315,9 +315,37 @@ for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
   grep -qF 'git add -A && git commit -m "wip(<id>): <summary>"' "$ROOT/$doc" \
     && [ "$(grep -cF 'git status --porcelain' "$ROOT/$doc")" -ge 3 ] \
     && grep -qF 'commit and push anything uncommitted to `bd/<T>`' "$ROOT/$doc" \
-    && grep -qF 'git log origin/main..bd/<id>' "$ROOT/$doc" && grep -qF 'git checkout -b bd/<id> origin/main' "$ROOT/$doc" \
+    && grep -qF 'git log origin/main..bd/<id>' "$ROOT/$doc" && [ "$(grep -cF 'git switch --no-track -c bd/<id> origin/main' "$ROOT/$doc")" -ge 2 ] \
     && grep -qF 'WIP: bd/<T>' "$ROOT/$doc" \
     && ok "requeue: $doc leaves a clean clone, review-fix too" || bad "requeue: $doc clean clone" "missing"
 done
+
+# --- review of PR #47: no push from a branch the workflow creates may reach main, even with
+# push.default=upstream (a branch tracking origin/main pushes to main). Runs the documented commands.
+G() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c user.name=t -c user.email=t@example.invalid \
+      -c core.hooksPath=/dev/null -c init.templateDir= -c push.default=upstream "$@" >/dev/null 2>&1; }
+oid() { git -C "$tmp/o.git" rev-parse -q --verify "$1" 2>/dev/null; }
+for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
+  make=$(grep -oF -m 1 'git switch --no-track -c bd/<id> origin/main' "$ROOT/$doc" | head -n 1)
+  push=$(grep -oF -m 1 'git push -u origin bd/<id>:refs/heads/bd/<id>' "$ROOT/$doc" | head -n 1)
+  rm -rf "$tmp/o.git" "$tmp/c"; G init -q --bare -b main "$tmp/o.git"; G clone -q "$tmp/o.git" "$tmp/c"
+  echo a > "$tmp/c/a"; G -C "$tmp/c" add a; G -C "$tmp/c" commit -q -m a; G -C "$tmp/c" push -q origin HEAD:main
+  before=$(oid main); done_ok=0
+  if [ -n "$make" ] && [ -n "$push" ]; then
+    make=${make//<id>/om-a}; push=${push//<id>/om-a}
+    # shellcheck disable=SC2086  # the documented command, split into its arguments
+    G -C "$tmp/c" ${make#git } && echo b > "$tmp/c/b" && G -C "$tmp/c" add b && G -C "$tmp/c" commit -q -m b \
+      && G -C "$tmp/c" ${push#git } && echo c > "$tmp/c/c" && G -C "$tmp/c" add c && G -C "$tmp/c" commit -q -m c \
+      && G -C "$tmp/c" push -q origin bd/om-a && G -C "$tmp/c" push -q && done_ok=1
+  fi
+  [ $done_ok = 1 ] && [ -n "$before" ] && [ "$(oid main)" = "$before" ] \
+    && [ "$(oid bd/om-a)" = "$(git -C "$tmp/c" rev-parse HEAD)" ] \
+    && ok "requeue: $doc: the documented branch and pushes never reach main" \
+    || bad "requeue: $doc push safety" "make='$make' push='$push' ok=$done_ok main=$before->$(oid main)"
+  ! grep -qE 'git checkout -b bd/|push the branch|, push it,' "$ROOT/$doc" \
+    && ok "requeue: $doc leaves no unspecified branch or push step" || bad "requeue: $doc vague push" "$(grep -nE 'git checkout -b bd/|push the branch|, push it,' "$ROOT/$doc")"
+done
+grep -qF 'git push origin bd/$id:refs/heads/bd/$id' "$ROOT/bin/hermes-run" \
+  && ok "requeue: the wrap-up prompt names the branch it pushes to" || bad "requeue: wrap-up push" "$(grep -n 'git push origin' "$ROOT/bin/hermes-run")"
 
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

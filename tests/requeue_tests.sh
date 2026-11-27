@@ -107,7 +107,7 @@ hrun() { # <max> : hermes-run in the target repo; sets out, rc
 }
 chats() { grep -c '^PROMPT: ' "$STUB_LOG"; }
 prompt() { grep '^PROMPT: ' "$STUB_LOG" | sed -n "${1}p"; }
-first_log() { ls "$W"/logs/run-*.log | head -n 1; }
+first_log() { ls "$W"/logs/run-*.log | sed 's/\.log$//' | LC_ALL=C sort | head -n 1 | sed 's/$/.log/'; }
 sup() { (cd "$W" && HERMES_LOG_DIR="$W/logs" "$BIN/hermes-supervise" "$@"); }
 
 # --- test_classify_run_requeued_marker ---
@@ -131,6 +131,9 @@ prompt 2 | grep -q 'Follow AGENTS.md "Autonomous Beads workflow".*Work issue om-
   && ok "requeue: the next run is told to work the blocker, ahead of a higher priority issue" || bad "requeue: chain prompt" "$(prompt 2)"
 grep -q '^RUN_RESULT=REQUEUED$' "$(first_log)" && grep -q '^REQUEUE: om-a blocked by om-b$' "$(first_log)" \
   && ok "requeue: the run log records the requeue" || bad "requeue: run log" "$(tail -4 "$(first_log)")"
+say "$out" | grep -qx '== run 1/2 completed: REQUEUED (issue om-a)' \
+  && say "$out" | grep -qx '== run 2/2 completed: QUEUE_EMPTY (issue om-b)' \
+  && ok "run number: each run's end names its number, result and issue" || bad "run number" "$(say "$out" | grep '== run')"
 say "$out" | grep -q 'BEADS: next om-b ' && ok "requeue: the BEADS: start line names the chosen issue" \
   || bad "requeue: BEADS next" "$(say "$out" | grep BEADS)"
 say "$out" | grep -q '^BEADS: loop worked 2 issue(s): om-a om-b | requeued om-a -> om-b | ' \
@@ -163,6 +166,8 @@ refused() { # <label> <expected reason>
 }
 reset_db; bead om-a 2 open; agent_run 1 om-a RUN_REQUEUED
 refused "no blocker edge" 'no open blocker'
+say "$out" | grep -qx '== run 1/3 completed: BLOCKED (issue om-a)' && ok "run number: the final result is shown, not the agent's" \
+  || bad "run number: refused" "$(say "$out" | grep '== run')"
 say "$(sup)" | grep -q '^ACTION=ASK_HUMAN$' && ok "requeue refused: supervise asks the human" || bad "requeue refused: supervise" "$(sup)"
 reset_db; bead om-a 2 open om-b; bead om-b 2 closed; agent_run 1 om-a RUN_REQUEUED
 refused "only a closed blocker" 'no open blocker'
@@ -247,6 +252,14 @@ for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
     grep -qF -- "$want" "$ROOT/$doc" || missing="$missing [$want]"
   done
   [ -z "$missing" ] && ok "requeue: $doc describes the requeue steps" || bad "requeue: $doc" "missing$missing"
+  # review of PR #47: bd refuses `dep add` over another edge type (discovered-from, related)
+  grep -qF 'already exists with type' "$ROOT/$doc" && grep -qF 'bd dep remove <id> <blocker>' "$ROOT/$doc" \
+    && ok "requeue: $doc replaces an edge of another type" || bad "requeue: $doc edge type" "missing"
+  # review of PR #47: the next run shares the clone, so nothing may stay uncommitted
+  grep -qF 'git add -A && git commit -m "wip(<id>): <summary>"' "$ROOT/$doc" \
+    && [ "$(grep -cF 'git status --porcelain' "$ROOT/$doc")" -ge 3 ] \
+    && grep -qF 'commit and push anything uncommitted to `bd/<T>`' "$ROOT/$doc" \
+    && ok "requeue: $doc leaves a clean clone, review-fix too" || bad "requeue: $doc clean clone" "missing"
 done
 
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

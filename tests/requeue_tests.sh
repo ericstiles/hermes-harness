@@ -345,7 +345,55 @@ for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
   ! grep -qE 'git checkout -b bd/|push the branch|, push it,' "$ROOT/$doc" \
     && ok "requeue: $doc leaves no unspecified branch or push step" || bad "requeue: $doc vague push" "$(grep -nE 'git checkout -b bd/|push the branch|, push it,' "$ROOT/$doc")"
 done
-grep -qF 'git push origin bd/$id:refs/heads/bd/$id' "$ROOT/bin/hermes-run" \
-  && ok "requeue: the wrap-up prompt names the branch it pushes to" || bad "requeue: wrap-up push" "$(grep -n 'git push origin' "$ROOT/bin/hermes-run")"
+wrapup=$(sed -n '/^wrapup_prompt()/,/^}/p' "$ROOT/bin/hermes-run")
+say "$wrapup" | grep -qF 'git push origin <branch>:refs/heads/<branch>' && say "$wrapup" | grep -qF 'review-fix' \
+  && say "$wrapup" | grep -qF 'bd/<T>' && say "$wrapup" | grep -qF 'bd/$id' \
+  && ok "requeue: the wrap-up prompt names the right branch, review-fix too, and its destination" || bad "requeue: wrap-up push" "$wrapup"
+# --- review nits of PR #47 (hermes-harness-paf), in both workflow copies ---
+for doc in AGENTS.md templates/AGENTS_WORKFLOW.md; do
+  loose=$(grep -nE 'git push[^`]*origin bd/<(T|id)>' "$ROOT/$doc" | grep -v ':refs/heads/bd/')
+  [ -z "$loose" ] && [ "$(grep -cF 'git push origin bd/<T>:refs/heads/bd/<T>' "$ROOT/$doc")" -ge 3 ] \
+    && grep -qF 'git push --force-with-lease origin bd/<T>:refs/heads/bd/<T>' "$ROOT/$doc" \
+    && ok "workflow: $doc: every bd push names its destination" || bad "workflow: $doc push destinations" "$loose"
+  grep -qF '`git switch bd/<id>`' "$ROOT/$doc" && grep -qF 'git log origin/bd/<id>..bd/<id>' "$ROOT/$doc" \
+    && ok "workflow: $doc: a branch already in the clone is continued, not recreated" || bad "workflow: $doc local branch" "missing"
+  grep -qF 'do not apply to these runs' "$ROOT/$doc" \
+    && ok "workflow: $doc: the interactive git steps do not apply to unattended runs" || bad "workflow: $doc unattended" "missing"
+done
+
+# --- review of PR #47: the run prompt must refresh the clone from whatever state the last run left it
+# in (no branch after an empty requeue, a new untracked branch, a pushed bd branch), where
+# `git pull` fails or keeps an old AGENTS.md. Runs the command the prompt gives.
+reset_db; bead om-a 2 open om-b; bead om-b 2 open; agent_run 1 om-a RUN_REQUEUED; agent_run 2 om-b NO_READY_WORK
+hrun 2
+refresh='git fetch origin && git checkout --detach origin/main'
+[ "$(prompt 1 | grep -cF "$refresh")" = 1 ] && [ "$(prompt 2 | grep -cF "$refresh")" = 1 ] \
+  && ! grep -q '^PROMPT: .*git pull' "$STUB_LOG" \
+  && ok "run prompt: the normal and the chain prompt refresh the clone from origin/main" || bad "run prompt: refresh" "$(prompt 1)"
+cmd=$(prompt 1 | grep -oF -m 1 "$refresh" | head -n 1)
+rm -rf "$tmp/o.git" "$tmp/c" "$tmp/other"
+G init -q --bare -b main "$tmp/o.git"; G clone -q "$tmp/o.git" "$tmp/c"; echo v1 > "$tmp/c/AGENTS.md"
+G -C "$tmp/c" add -A; G -C "$tmp/c" commit -q -m v1; G -C "$tmp/c" push -q origin HEAD:main; G clone -q "$tmp/o.git" "$tmp/other"
+newer() { echo "$1" > "$tmp/other/AGENTS.md"; G -C "$tmp/other" commit -q -a -m "$1"; G -C "$tmp/other" push -q origin HEAD:main; }
+refreshes() { # <label> <version> : the command works here and AGENTS.md is origin/main's
+  local part ran=1
+  [ -n "$cmd" ] || ran=0
+  # shellcheck disable=SC2086  # each documented command, split into its arguments
+  while [ $ran = 1 ] && IFS= read -r part; do G -C "$tmp/c" ${part#git } || ran=0; done <<EOF
+${cmd// && /
+}
+EOF
+  [ $ran = 1 ] && [ "$(cat "$tmp/c/AGENTS.md")" = "$2" ] && ok "run prompt: refresh works $1" \
+    || bad "run prompt: refresh $1" "ran=$ran AGENTS=$(cat "$tmp/c/AGENTS.md") cmd='$cmd'"
+}
+G -C "$tmp/c" checkout -q --detach; newer v2; refreshes "with no branch checked out" v2
+G -C "$tmp/c" switch -q --no-track -c bd/om-x; newer v3; refreshes "on a new untracked branch" v3
+G -C "$tmp/c" switch -q --no-track -c bd/om-y; G -C "$tmp/c" push -q -u origin bd/om-y:refs/heads/bd/om-y
+newer v4; refreshes "on a pushed bd branch" v4
+echo mine > "$tmp/c/AGENTS.md"; newer v5
+G -C "$tmp/c" fetch -q origin; ! G -C "$tmp/c" checkout --detach origin/main && [ "$(cat "$tmp/c/AGENTS.md")" = mine ] \
+  && prompt 1 | grep -qF 'never discard uncommitted changes' \
+  && ok "run prompt: uncommitted changes are kept, and the prompt says never to discard them" \
+  || bad "run prompt: dirty clone" "$(cat "$tmp/c/AGENTS.md")"
 
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

@@ -147,7 +147,8 @@ NO_HUMAN="No human is present and nobody will answer questions: never ask one or
 confirmation; a reply without a tool call ends the session. Only stop when the PR URL is printed, \
 or after printing RUN_BLOCKED, RUN_REQUEUED or NO_READY_WORK on its own line."
 PROMPT_HEAD="Follow AGENTS.md \"Autonomous Beads workflow\" for the repo in /workspace/$NAME \
-(clone $REPO with gh if missing, otherwise git pull)."
+(clone $REPO with gh if missing; otherwise run: git fetch origin && git checkout --detach origin/main \
+; never discard uncommitted changes: if git refuses, keep them and go on)."
 PROMPT="$PROMPT_HEAD Do one issue, then stop. $NO_HUMAN"
 chain_prompt() { # <issue id> -> the prompt of a run that must work that issue (the requeue chain)
   printf '%s' "$PROMPT_HEAD Work issue $1 instead of the pick in step 1 (only if bd ready does \
@@ -163,10 +164,12 @@ wrapup_prompt() { # <issue id or empty> <why the session is being wrapped up>
   local id=${1:-<the issue you claimed>}
   printf '%s' "No human is present; never ask a question. $2 This session gets only a few more \
 minutes, so do NOT continue the implementation: save your progress for the next run, in as few \
-terminal commands as possible. (1) In /workspace/$NAME, if branch bd/$id has uncommitted or \
-unpushed changes, commit them as \"wip($id): <summary>\" and git push origin bd/$id:refs/heads/bd/$id (never main, \
-never force-push). (2) bd update $id --append-notes \"WIP: <bd/$id if pushed, else none> - <what \
-is done, what you found out, the next step>\", then bd dolt push. Do not close, unclaim or block \
+terminal commands as possible. (1) In /workspace/$NAME, your branch is bd/$id, except on a \
+review-fix issue, where it is the PR branch bd/<T> that the issue names. If it has uncommitted or \
+unpushed changes, commit them as \"wip($id): <summary>\" and \
+git push origin <branch>:refs/heads/<branch> (never main, never force-push). (2) bd update $id \
+--append-notes \"WIP: <the branch if pushed, else none> - <what is done, what you found out, the \
+next step>\", then bd dolt push. Do not close, unclaim or block \
 the issue. Then print RUN_WIP_SAVED on its own line and stop."
 }
 

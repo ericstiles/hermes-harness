@@ -125,7 +125,7 @@ Each setting, with its default and what it does, is in [`templates/envrc.sample`
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_WRAPUP_TIMEOUT` (15m, 0 disables), `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
 `HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_STALL_WARN` (10m; 0 = off), `HERMES_CONTEXT_TIMEOUT` (30s, the session export behind the `CONTEXT:` usage line), `HERMES_BASELINE_TIMEOUT` (15s, `hermes prompt-size` behind the `CONTEXT: baseline` line), `HERMES_BEADS_TIMEOUT` (15s, each `bd stats`/`bd ready` behind the `BEADS:` lines and each `bd show`/`bd ready` of the requeue chain), `HERMES_CONTEXT_WINDOW` (context window for the usage line; looked up when unset, never guessed), `HERMES_TEST_CMD` (for `hermes-status --tests`),
 `REVIEWER_GH_TOKEN`, `REVIEWER_AGENT`, `REVIEWER_MODEL`, `OLLAMA_HOST_URL`,
-`HERMES_REVIEW_PYTHON` (for `hermes-review`), `HERMES_DOCKER_TIMEOUT` (15s, the `docker info` check before `hermes-launch` starts a run).
+`HERMES_REVIEW_PYTHON` (for `hermes-review`), `HERMES_DOCKER_TIMEOUT` (15s, the `docker info` check before `hermes-launch` starts a run; 0 skips it).
 
 The local reviewer and `hermes-run` share one Ollama. With the same model they share one
 loaded copy; a different `REVIEWER_MODEL` needs memory for both.

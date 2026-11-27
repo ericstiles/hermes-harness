@@ -57,12 +57,40 @@ dk "$UP:$BARE" "$BIN/hermes-launch" --dry-run
 NOPY5="$tmp/dk-nopy"; mkdir -p "$NOPY5"
 for f in "$BARE"/*; do case ${f##*/} in python*) ;; *) ln -s "$f" "$NOPY5/${f##*/}" ;; esac; done
 dk "$UP:$NOPY5" "$BIN/hermes-launch" --dry-run
-[ $rc -eq 0 ] && say "$out" | grep -q 'warning: python3 not found.*Docker was not checked' && ! say "$out" | grep -q 'not answering' \
+[ $rc -eq 0 ] && say "$out" | grep -q 'warning: python3 is missing or does not run.*Docker was not checked' && ! say "$out" | grep -q 'not answering' \
   && ok "launch docker: without python3 the check is skipped with a warning" || bad "launch docker: no python3" "rc=$rc $out"
 unset NOPY5
+# --- review of PR #48: a problem of our own must never be reported as Docker being down ---
+BROKEN="$tmp/dk-brokenpy"; dkstub "$BROKEN" python3 'exit 127'
+dk "$BROKEN:$UP:$BARE" "$BIN/hermes-launch" --dry-run
+[ $rc -eq 0 ] && say "$out" | grep -q 'python3 is missing or does not run.*Docker was not checked' && ! say "$out" | grep -q 'not answering' \
+  && ok "launch docker: a python3 that does not run is named, not blamed on Docker" || bad "launch docker: broken python3" "rc=$rc $out"
+wrong=""
+for v in 30sec 1m30s '15 s' abc -5 .5s; do
+  dk "$UP:$COL:$BARE" HERMES_DOCKER_TIMEOUT="$v" "$BIN/hermes-launch" --dry-run
+  [ $rc -eq 1 ] && say "$out" | grep -qF "HERMES_DOCKER_TIMEOUT='$v' is not a duration" && say "$out" | grep -q 'e.g. 15s or 2m' \
+    && ! say "$out" | grep -q 'not answering\|colima' || wrong="$wrong [$v: rc=$rc $out]"
+done
+[ -z "$wrong" ] && ok "launch docker: a bad time limit names the variable and the accepted form" || bad "launch docker: bad limit" "$wrong"
+# 0 turns the check off, as 0 does for the harness's other time settings; the stub is slow on purpose
+SLOW="$tmp/dk-slow"; dkstub "$SLOW" docker "echo called >> '$tmp/dk-slow.log'; sleep 1; exit 0"
+wrong=""
+for v in 0 0s 0m 0.0s; do
+  dk "$SLOW:$COL:$BARE" HERMES_DOCKER_TIMEOUT="$v" "$BIN/hermes-launch" --dry-run
+  [ $rc -eq 0 ] && say "$out" | grep -qF "warning: HERMES_DOCKER_TIMEOUT=$v: Docker was not checked" \
+    && [ ! -e "$tmp/dk-slow.log" ] || wrong="$wrong [$v: rc=$rc $out]"
+done
+[ -z "$wrong" ] && ok "launch docker: a time limit of 0 skips the check with a warning" || bad "launch docker: zero limit" "$wrong"
+wrong=""
+for v in 15 2m 1.5s 1h; do
+  dk "$UP:$BARE" HERMES_DOCKER_TIMEOUT="$v" "$BIN/hermes-launch" --dry-run
+  [ $rc -eq 0 ] && ! say "$out" | grep -q 'Docker was not checked' || wrong="$wrong [$v: rc=$rc $out]"
+done
+[ -z "$wrong" ] && ok "launch docker: seconds and unit forms are accepted" || bad "launch docker: good limits" "$wrong"
+unset BROKEN SLOW wrong v
 # --- help ---
 out=$("$BIN/hermes-launch" --help 2>&1)
-say "$out" | grep -q 'Docker does not answer' && say "$out" | grep -q 'HERMES_DOCKER_TIMEOUT' \
+say "$out" | grep -q 'Docker does not answer' && say "$out" | grep -q 'HERMES_DOCKER_TIMEOUT.*0 skips' \
   && say "$out" | sed -n '/^EXIT STATUS/,/^EXAMPLES/p' | grep -q 'Docker' \
   && ok "launch docker: --help lists the check, its time limit and the exit status" || bad "launch docker: help" "$out"
 unset -f dkstub dk untouched; unset BARE DOWN HANG COL UP start took kind

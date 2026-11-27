@@ -144,16 +144,12 @@ hrun 1
 [ $rc -eq 0 ] && say "$out" | grep -q '^FINAL_RESULT=REQUEUED$' && ok "requeue: a requeue on the last run ends the loop cleanly" \
   || bad "requeue: last run" "rc=$rc $(say "$out" | tail -4)"
 
-# --- test_supervise_requeued_auto_relaunch ---
+# --- test_supervise_requeued_is_done (owner's decision on PR #47: no relaunch, --max stays the cap) ---
 log=$(first_log); sout=$(sup "$log")
-say "$sout" | grep -q '^CLASS=REQUEUED$' && say "$sout" | grep -q '^ACTION=AUTO_RELAUNCH$' \
-  && say "$sout" | grep -q '^NEXT=hermes-launch --reason REQUEUED$' \
-  && ok "requeue: supervise relaunches without --issue" || bad "requeue: supervise" "$sout"
-d=$(date +%Y%m%d); printf '%s REQUEUED unknown\n' "$d" "$d" "$d" > "$W/logs/.relaunches"
-sout=$(sup "$log")
-say "$sout" | grep -q '^ACTION=ASK_HUMAN$' && ! say "$sout" | grep -q '^NEXT=' \
-  && ok "requeue: supervise asks the human after 3 REQUEUED relaunches today" || bad "requeue: supervise limit" "$sout"
-rm -f "$W/logs/.relaunches"; echo "LOOP_STOP=HARNESS_CHANGED left=4 files=lib/x.sh" >> "$log"
+say "$sout" | grep -q '^CLASS=REQUEUED$' && say "$sout" | grep -q '^ACTION=DONE$' && ! say "$sout" | grep -q '^NEXT=' \
+  && say "$sout" | grep -q '^WHY=.*om-a.*waits on its blocker.*hermes-launch' \
+  && ok "requeue: supervise says DONE and starts nothing" || bad "requeue: supervise" "$sout"
+echo "LOOP_STOP=HARNESS_CHANGED left=4 files=lib/x.sh" >> "$log"
 sout=$(sup "$log")
 say "$sout" | grep -q '^NEXT=hermes-launch --reason HARNESS_CHANGED --max 4$' \
   && ok "requeue: a harness change after a requeue keeps the issues that were left" || bad "requeue: harness changed" "$sout"

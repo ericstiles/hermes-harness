@@ -527,6 +527,8 @@ for i in $(seq 1 "$MAX"); do
   [ "$class" = OK_DONE ] && notes_check
   [ "$class" = REQUEUED ] && requeue_check
   final=$class
+  done_id=$(claimed_issue "$claim_log")
+  echo "== run $i/$MAX completed: $class (issue ${done_id:-none})" # the final result (bead iqf)
   case "$class" in
     OK_DONE|REQUEUED) continue ;;
     NOTES_LOST) echo "The PR's bead lost its PR link (NOTES_CHECK lines above); hermes-review would refuse the PR — stopping. See $log"; break ;;

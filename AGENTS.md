@@ -140,17 +140,24 @@ only. Interactive sessions keep the Conservative profile.
        1. No bead for the blocker yet: file it with `bd create` as below, with
           `--deps discovered-from:<id>`.
        2. `bd dep add <id> <blocker>` (`<id>` is your issue; one command per
-          blocker). If bd refuses because it would create a cycle, this is a
+          blocker). If bd says the dependency `already exists with type` another
+          one: `bd dep remove <id> <blocker>`, run the add again, and name the
+          old type in the note of step 4. If bd refuses for any other reason (a
+          cycle, or the blocker is your issue's parent epic), this is a
           needs-a-human blocker instead.
-       3. If you committed anything: push the branch, and
-          `bd update <id> --append-notes "WIP: bd/<id> - <what is done>"`.
-          If you committed nothing: delete the empty branch
-          (`git checkout --detach origin/main && git branch -d bd/<id>`).
+       3. Leave nothing uncommitted: the next run works in this same clone.
+          Delete your scratch files, then, if `git status --porcelain` lists
+          anything, `git add -A && git commit -m "wip(<id>): <summary>"`.
+          - The branch has commits (`git log origin/main..HEAD`): push it, and
+            `bd update <id> --append-notes "WIP: bd/<id> - <what is done>"`.
+          - It has none: delete the empty branch
+            (`git checkout --detach origin/main && git branch -d bd/<id>`).
        4. `bd update <id> --append-notes "REQUEUED: blocked by <blocker>: <why>"`
           (name the pushed branch, if any).
        5. `bd unclaim <id>` (status goes back to open), `bd dolt push`, verify
-          with `bd show <id>`, then print `RUN_REQUEUED`. Stop. Do not start the
-          blocker: `hermes-run` gives it to a later run.
+          with `bd show <id>`, and check that `git status --porcelain` prints
+          nothing. Then print `RUN_REQUEUED`. Stop. Do not start the blocker:
+          `hermes-run` gives it to a later run.
      - **Only a human can unblock it** (unclear requirements, missing access, a
        command the sandbox denies): commit WIP to the branch, push it, run
        `bd update <id> --status blocked --append-notes "<why>"`, and print
@@ -172,9 +179,10 @@ only. Interactive sessions keep the Conservative profile.
      close B). Name B in the commit message and in a PR comment
      (`gh pr comment <N> --body "Also fixes B: <why>"`). If B is already
      claimed by someone else, do not touch it: requeue F behind it (step 5,
-     "Another bead must be finished first": `<id>` is F, `<blocker>` is B; push
-     anything you committed to `bd/<T>` and never delete that branch), name B
-     and its assignee in the note, and stop.
+     "Another bead must be finished first": `<id>` is F, `<blocker>` is B). In
+     its step 3, commit and push anything uncommitted to `bd/<T>`, never delete
+     that branch, and leave `git status --porcelain` empty. Name B and its
+     assignee in the note, and stop.
   4. Fix every point. Tests first for each bug, as in the issue sections below.
      Run the quality gate.
   5. Commit and `git push origin bd/<T>`. Do NOT open a new PR, do NOT

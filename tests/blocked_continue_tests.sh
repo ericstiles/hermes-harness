@@ -59,12 +59,20 @@ reset_db; bead om-a 2 open "" '"notes": "BLOCKED: access: old reason"'; blocked_
 hrun 1
 field om-a notes | grep -qF "$HOSTNOTE" && ! say "$out" | grep -q 'PARKED: om-a (BLOCKED: access: old reason)' \
   && ok "blocked: an earlier run's BLOCKED: note does not count" || bad "blocked: old note" "$(say "$out" | grep PARK)"
-# the notes could not be read before the run: a parked issue with a BLOCKED: note is still accepted
+# the host's actor differs from the agent's, so bd refuses one update that moves status and assignee
+two; blocked_run 1 om-a
+hrun 1
+grep -qx 'bd update om-a --if-status in_progress --if-assignee hermes --status blocked' "$STUB_LOG" \
+  && grep -q '^bd update om-a --if-status blocked --if-assignee hermes --assignee  --append-notes BLOCKED: ' "$STUB_LOG" \
+  && ok "blocked: status first, then assignee and note, each pinned to what was read" \
+  || bad "blocked: pinned updates" "$(grep '^bd update' "$STUB_LOG")"
+# the notes could not be read before the run: nothing is written; an agent's park is still accepted
 two; blocked_run 1 om-a "$WHY"
 STUB_SNAPSHOT_FAIL=1 hrun 1
-parked om-a && [ "$(field om-a notes)" = "$WHY" ] && say "$out" | grep -qxF "PARKED: om-a ($WHY)" \
+[ "$(field om-a status)" = blocked ] && [ "$(field om-a assignee)" = hermes ] && [ "$(field om-a notes)" = "$WHY" ] \
+  && say "$out" | grep -qxF "PARKED: om-a ($WHY)" && ! grep -q '^bd update om-a --if' "$STUB_LOG" \
   && say "$out" | grep -q '^PARK: could not read the notes from before the run' \
-  && ok "blocked: without the earlier notes the agent's park is still accepted, and it says so" \
+  && ok "blocked: without the earlier notes the agent's park is accepted, nothing is written, and it says so" \
   || bad "blocked: no snapshot" "$(say "$out" | grep PARK) $(field om-a notes)"
 # the pushed WIP branch is named; a review fix's branch is its ticket's
 two; blocked_run 1 om-a "$WHY"
@@ -112,6 +120,28 @@ two; blocked_run 1 om-a
 STUB_UPDATE_FAIL=1 hrun 3; stops "a park bd refuses" 'could not park om-a'
 two; agent_run 1 om-zz RUN_BLOCKED
 hrun 3; stops "an issue bd cannot show" 'could not park om-zz'
+
+# without the earlier notes, an issue the agent did not park is not touched
+two; blocked_run 1 om-a
+STUB_SNAPSHOT_FAIL=1 hrun 3; stops "an unparked issue without the earlier notes" 'nothing is changed'
+[ "$(field om-a status)" = in_progress ] && [ -z "$(field om-a notes)" ] \
+  && ok "not parked: without the earlier notes it stays as the agent left it" || bad "not parked: no snapshot changed" "$(field om-a status)"
+reset_db; bead om-a 2 in_progress "" '"assignee": "someone"'; bead om-b 2 open; agent_run 1 om-a RUN_BLOCKED
+STUB_SNAPSHOT_FAIL=1 hrun 3; stops "someone else's claim without the earlier notes" 'nothing is changed'
+[ "$(field om-a status)" = in_progress ] && [ "$(field om-a assignee)" = someone ] \
+  && ok "not parked: the claim survives a failed snapshot" || bad "not parked: snapshot claim" "$(field om-a status) $(field om-a assignee)"
+# open but assigned to a person: bd ready lists it, the agent's claim is refused
+reset_db; bead om-a 2 open "" '"assignee": "alice"'; bead om-b 2 open; blocked_run 1 om-a
+hrun 3; stops "an issue assigned to a person whose claim was refused" 'om-a is open and assigned to alice'
+[ "$(field om-a status)" = open ] && [ "$(field om-a assignee)" = alice ] && [ -z "$(field om-a notes)" ] \
+  && ok "not parked: that person keeps the issue" || bad "not parked: assigned" "$(field om-a status) $(field om-a assignee)"
+# ... and if the agent blocks it anyway, the assignee from before the run is kept
+reset_db; bead om-a 2 open "" '"assignee": "alice"'; bead om-b 2 open; blocked_run 1 om-a "$WHY"; agent_run 2 om-b NO_READY_WORK
+hrun 2
+[ "$(chats)" = 2 ] && [ "$(field om-a status)" = blocked ] && [ "$(field om-a assignee)" = alice ] \
+  && say "$out" | grep -q '^PARK: om-a was assigned to alice before this run: the assignee is kept' \
+  && say "$out" | grep -qxF "PARKED: om-a ($WHY)" \
+  && ok "blocked: an assignee from before the run is never removed" || bad "blocked: earlier assignee" "chats=$(chats) $(field om-a assignee) $(say "$out" | grep PARK)"
 
 # --- test_blocked_breaker_stops_after_two_in_a_row ---
 two; bead om-c 3 open; blocked_run 1 om-a "$WHY"; blocked_run 2 om-b "$WHY"
@@ -186,6 +216,16 @@ sout=$(sup "$log")
 say "$sout" | grep -q '^ACTION=AUTO_RELAUNCH$' && say "$sout" | grep -qx 'NEXT=hermes-launch --reason HARNESS_CHANGED --max 4' \
   && say "$sout" | grep -qx 'ALSO=om-a' && say "$sout" | grep -qx 'evidence: bd show om-a' \
   && ok "supervise: a relaunchable stop keeps its action and lists the parked issues as ALSO=" || bad "supervise: ALSO" "$sout"
+# the parked run was a resumed session: its log has no claim
+two; printf '  ┊ 💻 $ bd update om-a --claim --json\nShall I go on?\n\nSession: 20260101_000000_abc\nResume this session with:\n' > "$STUB_PLAN/1"
+echo "bd update om-a --claim" > "$STUB_PLAN/1.sh"; printf 'RUN_BLOCKED\n\nResume this session with:\n' > "$STUB_PLAN/2"
+hrun 1; log=$(last_log); sout=$(sup "$log")
+say "$sout" | grep -q '^ACTION=ASK_HUMAN$' && say "$sout" | grep -q '^WHY=.*parked.*om-a' && ! say "$sout" | grep -q '^ALSO=' \
+  && ok "supervise: a parked resumed run is not reported as a stopped loop" || bad "supervise: resumed" "$sout"
+echo "LOOP_STOP=HARNESS_CHANGED left=4 files=lib/x.sh" >> "$log"; sout=$(sup "$log")
+say "$sout" | grep -q '^ACTION=AUTO_RELAUNCH$' && say "$sout" | grep -qx 'NEXT=hermes-launch --reason HARNESS_CHANGED --max 4' \
+  && say "$sout" | grep -qx 'ALSO=om-a' \
+  && ok "supervise: a harness change after a parked resumed run is relaunched" || bad "supervise: resumed harness" "$sout"
 printf 'RUN_RESULT=AUTH_ERROR\nPARKED_ISSUES=om-a,om-b\n' > "$W/logs/auth.log"; sout=$(sup "$W/logs/auth.log")
 say "$sout" | grep -q '^ACTION=ASK_HUMAN$' && say "$sout" | grep -q '^WHY=credentials' && say "$sout" | grep -qx 'ALSO=om-a,om-b' \
   && ok "supervise: another human stop keeps its reason and adds ALSO=" || bad "supervise: auth" "$sout"

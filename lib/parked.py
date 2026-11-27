@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """parked: after a run ends RUN_BLOCKED, make sure its issue is parked (bead yiv).
 
-    parked.py snapshot FILE         # before a run: every issue's status and notes -> FILE
-    parked.py park ID FILE LOGREF   # after RUN_BLOCKED -> "LOG <explanation>" lines, CHANGED when
+    parked.py snapshot FILE         # before a run: every issue's status, assignee, notes -> FILE
+    parked.py park ID FILE LOGREF   # after RUN_BLOCKED -> "LOG <explanation>" lines, CHANGED once
                                     #   beads were written, BRANCH <bd/...>, then
                                     #   PARKED <the reason> | NOT_PARKED <why>
 
 Parked means: status blocked, nobody assigned, and a note line starting `BLOCKED:` that this run
 added (told apart from older ones by the snapshot). Whatever the agent left undone is done here.
-An issue that was not open before the run, or is now closed or deferred, is left as it is.
-Writes only that one `bd update`; the caller pushes. Each `bd` call is under HERMES_BEADS_TIMEOUT
-(15s). Exits 0. Python 3.9+, stdlib only.
+
+Only this run's issue is changed. Nothing is written when the issue was not open before the run, is
+now closed or deferred, is open but assigned (the claim did not take), or when the snapshot is
+missing; an assignee it already had before the run is never removed. Writes are at most two
+`bd update`s, status first (bd refuses to reassign another actor's in_progress issue), each pinned
+with --if-status/--if-assignee to what was just read. The caller pushes. Each `bd` call is under
+HERMES_BEADS_TIMEOUT (15s). Exits 0. Python 3.9+, stdlib only.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ class Before:
     """An issue as it was before the run."""
 
     status: str
+    assignee: str
     notes: str
 
 
@@ -42,13 +47,17 @@ def clean(text: str) -> str:
 
 
 def snapshot(path: str) -> None:
-    """Write every issue's status and notes to path; a failed read leaves no file behind."""
+    """Write every issue's status, assignee and notes to path; a failed read leaves no file."""
     if os.path.exists(path):
         os.remove(path)  # an older run's snapshot must never pass for this run's
     items = bd_json("list", "--all", "--limit", "0")
     try:
         found = {
-            str(i["id"]): {"status": str(i["status"]), "notes": str(i.get("notes") or "")}
+            str(i["id"]): {
+                "status": str(i["status"]),
+                "assignee": str(i.get("assignee") or ""),
+                "notes": str(i.get("notes") or ""),
+            }
             for i in items
         }
     except (AttributeError, KeyError, TypeError):
@@ -63,7 +72,9 @@ def load_before(path: str, bead_id: str) -> Before | None:
         with open(path, encoding="utf-8") as source:
             data = json.load(source)
         found = data.get(bead_id)
-        return Before("open", "") if found is None else Before(found["status"], found["notes"])
+        if found is None:
+            return Before("open", "", "")
+        return Before(found["status"], found["assignee"], found["notes"])
     except (OSError, ValueError, AttributeError, KeyError, TypeError):
         return None
 
@@ -80,20 +91,15 @@ def added_lines(old: str, new: str) -> list[str]:
     return added
 
 
-def this_runs_reason(before: Before | None, status: str, notes: str) -> str:
-    """The agent's last BLOCKED: line from this run, else an empty string. Without the snapshot an
-    older line cannot be told apart, so it counts only when the issue is already blocked."""
-    if before is None:
-        lines = notes.splitlines() if status == "blocked" else []
-    else:
-        lines = added_lines(before.notes, notes)
+def blocked_lines(lines: list[str]) -> str:
+    """The last `BLOCKED:` line, else an empty string."""
     found = [line for line in lines if line.startswith(PREFIX)]
     return found[-1] if found else ""
 
 
-def host_note(before: Before | None, status: str, notes: str, logref: str) -> str:
+def host_note(before: Before, status: str, notes: str, logref: str) -> str:
     """The note the harness adds when the agent did not park the issue properly."""
-    added = added_lines(before.notes, notes) if before is not None else []
+    added = added_lines(before.notes, notes)
     if status == "blocked" and added:
         return (
             f"{PREFIX} run ended RUN_BLOCKED without a BLOCKED: note "
@@ -118,46 +124,87 @@ def wip_branch(bead_id: str, data: dict) -> str:
     return f"bd/{bead_id}"
 
 
+def refusal(bead_id: str, before: Before, status: str, assignee: str) -> str:
+    """Why this issue is not this run's to change, else an empty string."""
+    if before.status != "open":
+        return f"{bead_id} was {before.status} before this run, so it is not this run's to change"
+    if status not in PARKABLE:
+        return f"{bead_id} is {status}; left as it is"
+    if status == "open" and assignee:  # a claim that took leaves the issue in_progress
+        return (
+            f"{bead_id} is open and assigned to {assignee}: this run's claim did not take, "
+            "so nothing is changed"
+        )
+    return ""
+
+
+def parked_lines(bead_id: str, data: dict, reason: str) -> list[str]:
+    return [f"BRANCH {wip_branch(bead_id, data)}", f"PARKED {clean(reason)}"]
+
+
+def park_unknown(bead_id: str, data: dict) -> list[str]:
+    """Without the snapshot nothing is written: only an already parked issue is accepted."""
+    status = str(data.get("status"))
+    reason = blocked_lines(str(data.get("notes") or "").splitlines())
+    if status == "blocked" and reason:
+        return [
+            "LOG could not read the notes from before the run: taking the issue's last BLOCKED: "
+            "note as this run's, and changing nothing",
+            *parked_lines(bead_id, data, reason),
+        ]
+    return [
+        f"NOT_PARKED could not read the notes from before the run and {bead_id} is {status} "
+        "without being parked, so nothing is changed"
+    ]
+
+
+def updates(status: str, assignee: str, release: bool, note: str) -> list[tuple[str, ...]]:
+    """The `bd update` arguments still needed, each pinned to the state it expects."""
+    pin = ("--if-assignee", assignee)
+    rest = (
+        *(("--assignee", "") if release else ()),
+        *(("--append-notes", note) if note else ()),
+    )
+    first = [("--if-status", status, *pin, "--status", "blocked")] if status != "blocked" else []
+    return [*first, *([("--if-status", "blocked", *pin, *rest)] if rest else [])]
+
+
 def park(bead_id: str, before: Before | None, logref: str) -> list[str]:
     """The output lines of `parked.py park`."""
     data = show(bead_id)
-    status = str(data.get("status"))
-    notes = str(data.get("notes") or "")
-    if before is not None and before.status != "open":
-        return [
-            f"NOT_PARKED {bead_id} was {before.status} before this run, so it is not this "
-            "run's to change"
-        ]
-    if status not in PARKABLE:
-        return [f"NOT_PARKED {bead_id} is {status}; left as it is"]
-    out = []
     if before is None:
-        out.append(
-            "LOG could not read the notes from before the run: a BLOCKED: note on a blocked "
-            "issue is taken as this run's"
-        )
-    reason = this_runs_reason(before, status, notes)
+        return park_unknown(bead_id, data)
+    status = str(data.get("status"))
+    assignee = str(data.get("assignee") or "")
+    notes = str(data.get("notes") or "")
+    why_not = refusal(bead_id, before, status, assignee)
+    if why_not:
+        return [f"NOT_PARKED {why_not}"]
+    # an assignee from before the run is kept unless this run's claim made the issue in_progress
+    keep = bool(assignee) and assignee == before.assignee and status == "blocked"
+    out = [f"LOG {bead_id} was assigned to {assignee} before this run: the assignee is kept"]
+    out = out if keep else []
+    reason = blocked_lines(added_lines(before.notes, notes))
     note = "" if reason and status == "blocked" else host_note(before, status, notes, logref)
-    changes = [
-        *(("--status", "blocked") if status != "blocked" else ()),
-        *(("--assignee", "") if data.get("assignee") else ()),
-        *(("--append-notes", note) if note else ()),
-    ]
-    if changes:
-        try:
-            bd_run("update", bead_id, *changes)
+    todo = updates(status, assignee, bool(assignee) and not keep, note)
+    written: list[str] = []
+    try:
+        for args in todo:
+            bd_run("update", bead_id, *args)
+            written = ["CHANGED"]
+        if todo:
             data = show(bead_id)
-        except BeadsError as exc:
-            return [*out, "CHANGED", f"NOT_PARKED could not park {bead_id} ({exc})"]
-        if data.get("status") != "blocked" or data.get("assignee"):
-            return [
-                *out,
-                "CHANGED",
-                f"NOT_PARKED could not park {bead_id} (it is still {data.get('status')}, "
-                f"assignee {data.get('assignee') or 'none'})",
-            ]
-        out.append("CHANGED")
-    return [*out, f"BRANCH {wip_branch(bead_id, data)}", f"PARKED {clean(reason or note)}"]
+    except BeadsError as exc:
+        return [*out, *written, f"NOT_PARKED could not park {bead_id} ({exc})"]
+    left = str(data.get("assignee") or "")
+    if data.get("status") != "blocked" or left not in ("", assignee if keep else ""):
+        return [
+            *out,
+            *written,
+            f"NOT_PARKED could not park {bead_id} (it is still {data.get('status')}, "
+            f"assignee {left or 'none'})",
+        ]
+    return [*out, *written, *parked_lines(bead_id, data, reason or note)]
 
 
 def main(argv: list[str]) -> str:

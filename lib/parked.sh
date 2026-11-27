@@ -4,7 +4,7 @@
 
 _hh_parked_py() { python3 "$HARNESS_HOME/lib/parked.py" "$@"; }
 
-# Before a run: remember every issue's status and notes. On failure there is no file, and
+# Before a run: remember every issue's status, assignee and notes. On failure there is no file, and
 # hh_park says so.
 hh_notes_snapshot() { _hh_parked_py snapshot "$1" >/dev/null 2>&1 || rm -f "$1"; }
 

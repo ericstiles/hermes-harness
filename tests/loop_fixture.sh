@@ -64,6 +64,15 @@ if args[:1] == ["list"] and "--notes-contains" in args:
 elif args[:1] == ["update"]:
     if os.environ.get("STUB_UPDATE_FAIL") == "1" and "--claim" not in args:
         sys.exit(1)
+    held = beads[args[1]].get("assignee", "")
+    actor = os.environ.get("BEADS_ACTOR") or "host"
+    for flag, now in (("--if-status", beads[args[1]]["status"]), ("--if-assignee", held)):
+        if flag in args and args[args.index(flag) + 1] != now:
+            sys.exit(13)
+    if "--claim" in args and held not in ("", "hermes"):
+        sys.exit(1)  # already assigned to someone else
+    if "--assignee" in args and beads[args[1]]["status"] == "in_progress" and held not in ("", actor):
+        sys.exit(1)  # cannot reassign: held by someone else
     changes = {}
     if "--claim" in args:
         changes.update(status="in_progress", assignee="hermes")

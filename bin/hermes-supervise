@@ -143,10 +143,11 @@ case "$class" in
     why="the run opened its PR but the bead lost its PR link, so hermes-review will refuse the PR. Check with bd show, then repair: ${fixes:-see the NOTES_CHECK lines}" ;;
   *)          why="unclassified; read the evidence" ;;
 esac
-# issues the loop parked as blocked (bead yiv); went_on=1 when the last run's issue is one of them
+# issues the loop parked as blocked (bead yiv); went_on=1 when the last run's issue was parked: its
+# log then has the PARKED: line (a resumed run's log has no claim to match against the list)
 parked=""; [ "$class" = RUNNING ] || parked=$(tr -d '\r' < "$log" | sed -n 's/^PARKED_ISSUES=//p' | tail -n 1)
 went_on=0
-if [ "$class" = BLOCKED ] && [ -n "$issue" ]; then case ",$parked," in *",$issue,"*) went_on=1 ;; esac; fi
+if [ "$class" = BLOCKED ] && [ -n "$parked" ] && tr -d '\r' < "$log" | grep '^PARKED: ' >/dev/null; then went_on=1; fi
 # hermes-run stopped the loop between runs because its own code changed (bead eyx)
 loop_stop=$(tr -d '\r' < "$log" | sed -n 's/^LOOP_STOP=//p' | tail -n 1)
 if { [ "$class" = OK_DONE ] || [ "$class" = REQUEUED ] || [ "$went_on" = 1 ]; } && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then

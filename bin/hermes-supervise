@@ -27,6 +27,8 @@
 #                    log's RUN_PROVIDER: line, URL from Hermes' config; lib/model_endpoint.sh); stop after 3
 #                    in a row. An endpoint that cannot be resolved -> ASK_HUMAN.
 #   QUEUE_EMPTY / OK_DONE  DONE / WAIT: nothing to do.
+#   REQUEUED         AUTO_RELAUNCH (no --issue: nothing needs a human), at most 3 a day. The new
+#                    loop starts with an empty requeue chain and picks by priority.
 #   LOOP_STOP=HARNESS_CHANGED in the run log (hermes-run stopped the loop between runs because
 #                    the harness code changed): after an OK_DONE run, AUTO_RELAUNCH so the rest of
 #                    the queue runs on the new code; the LOOP_STOP line is shown either way.
@@ -87,6 +89,12 @@ case "$class" in
   RUNNING)  action=WAIT; why="a run is in progress; check again in 20-30 min" ;;
   OK_DONE)  action=DONE; why="run finished and opened a PR; review/merge is the human's step" ;;
   QUEUE_EMPTY) action=DONE; why="no ready beads issues (bd dolt pull to confirm, then create issues)" ;;
+  REQUEUED) # no --issue, so the per-issue counter cannot see these relaunches: count them
+    rq_today=$(awk -v d="$today" '$1==d && $2=="REQUEUED"{n++} END{print n+0}' "$STATE" 2>/dev/null || echo 0)
+    if [ "$rq_today" -ge "$MAX_RELAUNCH" ]; then
+      why="the REQUEUED relaunch limit ($MAX_RELAUNCH/day) is reached: check the blocker chain of ${issue:-the issue} (bd show ${issue:-<id>}), then hermes-launch --reason REQUEUED"
+    else action=AUTO_RELAUNCH; next="hermes-launch --reason REQUEUED"
+         why="${issue:-the issue} was requeued behind its blocker (bd show ${issue:-<id>}); relaunch to work the queue"; fi ;;
   TIMEOUT)
     if [ -n "$issue" ] && [ "$(count_today "$issue" TIMEOUT)" -ge 2 ]; then
       why="issue $issue timed out twice today: split it (bd create ... --deps discovered-from:$issue), bd update $issue --status blocked, then relaunch"
@@ -136,7 +144,8 @@ case "$class" in
 esac
 # hermes-run stopped the loop between runs because its own code changed (bead eyx)
 loop_stop=$(tr -d '\r' < "$log" | sed -n 's/^LOOP_STOP=//p' | tail -n 1)
-if [ "$class" = OK_DONE ] && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
+if { [ "$class" = OK_DONE ] || [ "$class" = REQUEUED ]; } && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
+  did="opened a PR"; [ "$class" = REQUEUED ] && did="requeued its issue"
   left=$(printf '%s\n' "$loop_stop" | sed -n 's/.* left=\([0-9][0-9]*\).*/\1/p')
   files=$(printf '%s\n' "$loop_stop" | sed -n 's/.* files=//p')
   # the per-issue counter cannot see these relaunches (no --issue): count them on their own
@@ -146,7 +155,7 @@ if [ "$class" = OK_DONE ] && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
     why="hermes-run stopped the loop because the harness code changed (${files:-see LOOP_STOP}), and the HARNESS_CHANGED relaunch limit ($MAX_RELAUNCH/day) is reached: is the harness checkout still changing? Relaunch by hand: hermes-launch --reason HARNESS_CHANGED${left:+ --max $left}"
   else
     action=AUTO_RELAUNCH; next="hermes-launch --reason HARNESS_CHANGED${left:+ --max $left}"
-    why="the run finished and opened a PR, then hermes-run stopped the loop because the harness code changed (${files:-see LOOP_STOP}); relaunch so the rest of the queue runs on the new code"
+    why="the run finished and $did, then hermes-run stopped the loop because the harness code changed (${files:-see LOOP_STOP}); relaunch so the rest of the queue runs on the new code"
   fi
 fi
 

@@ -335,6 +335,13 @@ if ! command -v python3 >/dev/null 2>&1; then echo "skip - hermes-run tests need
   out=$(runit "$BIN/hermes-run" 1 2>&1); rc=$?
   [ $rc -ne 0 ] && say "$out" | grep -q 'GITHUB_REPO' && ok "no origin and no GITHUB_REPO -> clear error" || bad "no origin" "$rc $out"
 fi
+# --- a blocked pick is requeued and its blocker chain worked first (bead 35r); runs standalone too ---
+out=$(bash "$HERE/requeue_tests.sh" 2>&1); rc=$?
+printf '%s\n' "$out" | grep -vE '^passed=[0-9]+ failed=[0-9]+$'
+n_ok=$(printf '%s\n' "$out" | grep -c '^ok  '); n_bad=$(printf '%s\n' "$out" | grep -c '^FAIL ')
+pass=$((pass + n_ok)); fail=$((fail + n_bad))
+[ $rc -eq 0 ] || [ "$n_bad" -gt 0 ] || bad "requeue tests stopped early" "rc=$rc"
+unset n_ok n_bad
 # --- hermes-review: CLI wrapper + Python unit tests (pytest via uv; skipped without uv) ---
 out=$("$BIN/hermes-review" --help 2>&1)
 say "$out" | grep -q 'reviewer agent for Hermes PRs' && ok "hermes-review --help" || bad "review help" "$out"
@@ -347,7 +354,7 @@ if command -v uv >/dev/null 2>&1; then
   # Lint + format with the repo's ruff.toml (pinned ruff, so results do not drift).
   for lint in "check --output-format concise" "format --check"; do
     # shellcheck disable=SC2086  # $lint is two words on purpose
-    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py lib/context_usage.py lib/bead_stats.py tests/py 2>&1); rc=$?
+    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py lib/context_usage.py lib/bead_stats.py lib/requeue.py tests/py 2>&1); rc=$?
     [ $rc -eq 0 ] && ok "ruff ${lint%% *}: clean" || bad "ruff ${lint%% *}" "$(echo "$out" | tail -n 20)"
   done
 else

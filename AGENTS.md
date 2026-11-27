@@ -33,7 +33,8 @@ only. Interactive sessions keep the Conservative profile.
         │                                body   Bead: T
         │                                       Hermes-Session: <id>
         │                              notes on T: "PR: <url>"
-        │                              T stays in_progress (blocked? → RUN_BLOCKED)
+        │                              T stays in_progress (needs a human? → RUN_BLOCKED;
+        │                              needs another bead? → RUN_REQUEUED, T open again)
         │                                                │
         └──── review-fix issue F ────┐                   │
                                      ▼                   │
@@ -77,14 +78,15 @@ only. Interactive sessions keep the Conservative profile.
   or the database has 0 issues, print the reason and `RUN_BLOCKED`, and stop.
   Never fall back to a markdown issue list (e.g. under `docs/`) as the
   queue, and never edit `sync.remote`.
-- Print the stop markers `NO_READY_WORK` and `RUN_BLOCKED` alone on their own
-  line, exactly as written; the harness classifies the run from them.
+- Print the stop markers `NO_READY_WORK`, `RUN_BLOCKED` and `RUN_REQUEUED`
+  alone on their own line, exactly as written; the harness classifies the run
+  from them.
 - **No human is present.** These runs are unattended: nobody reads your
   messages until the run is over and nobody will answer a question. Never ask
   a question, offer options, or wait for confirmation. A reply without a tool
   call ENDS the session, so only reply without a tool call when you are done:
-  the PR URL is printed (step 4), or you printed `RUN_BLOCKED` (step 5), or
-  `NO_READY_WORK`. If you are unsure, decide yourself and note the decision in
+  the PR URL is printed (step 4), or you printed `RUN_BLOCKED` or
+  `RUN_REQUEUED` (step 5), or `NO_READY_WORK`. If you are unsure, decide yourself and note the decision in
   the PR body; if you truly cannot continue, that is step 5 (blocked).
 - Then `bd prime`. Use `bd` for all tracking; no markdown TODOs.
 - **Never replace notes** (`bd update --notes` is blocked: it erases the PR
@@ -104,7 +106,9 @@ only. Interactive sessions keep the Conservative profile.
      `bd ready --json --exclude-type epic --sort priority`
      (highest priority first; dependencies already filter out anything not
      yet unblocked). Do not pick by title, label or your own judgement, and
-     never work an epic: epics are containers closed by their children. If the
+     never work an epic: epics are containers closed by their children. The one
+     exception: if your prompt says `Work issue <id>`, take that issue instead
+     (`hermes-run` is working a blocker chain). If the
      list is empty, run `bd dolt pull` once and repeat the command; if it is
      still empty, print `NO_READY_WORK` and stop. Do not investigate the
      unfiltered list.
@@ -130,9 +134,27 @@ only. Interactive sessions keep the Conservative profile.
      it stays `in_progress` so its dependents stay blocked until the PR is
      merged; the reviewer (`hermes-review`) closes it on merge. Print the full
      PR URL on its own line in your final message.
-  5. If you hit a blocker: commit WIP to the branch, push it, run
-     `bd update <id> --status blocked --append-notes "<why>"`, and print
-     `RUN_BLOCKED`. Stop. Don't guess at requirements.
+  5. If you cannot do the issue yet, decide which kind of blocker it is.
+     - **Another bead must be finished first** (an existing one, or a bug or
+       gap you file as one): requeue, do not block.
+       1. No bead for the blocker yet: file it with `bd create` as below, with
+          `--deps discovered-from:<id>`.
+       2. `bd dep add <id> <blocker>` (`<id>` is your issue; one command per
+          blocker). If bd refuses because it would create a cycle, this is a
+          needs-a-human blocker instead.
+       3. If you committed anything: push the branch, and
+          `bd update <id> --append-notes "WIP: bd/<id> - <what is done>"`.
+          If you committed nothing: delete the empty branch
+          (`git checkout --detach origin/main && git branch -d bd/<id>`).
+       4. `bd update <id> --append-notes "REQUEUED: blocked by <blocker>: <why>"`
+          (name the pushed branch, if any).
+       5. `bd unclaim <id>` (status goes back to open), `bd dolt push`, verify
+          with `bd show <id>`, then print `RUN_REQUEUED`. Stop. Do not start the
+          blocker: `hermes-run` gives it to a later run.
+     - **Only a human can unblock it** (unclear requirements, missing access, a
+       command the sandbox denies): commit WIP to the branch, push it, run
+       `bd update <id> --status blocked --append-notes "<why>"`, and print
+       `RUN_BLOCKED`. Stop. Don't guess at requirements.
   6. If `hermes-run` resumes you to say the time limit was reached or Hermes
      crashed, do only what that message asks (push WIP, append a `WIP:` note,
      `bd dolt push`, print `RUN_WIP_SAVED`). Do not keep implementing.
@@ -149,9 +171,10 @@ only. Interactive sessions keep the Conservative profile.
      (that exact line; the reviewer closes B when it merges the PR, so do NOT
      close B). Name B in the commit message and in a PR comment
      (`gh pr comment <N> --body "Also fixes B: <why>"`). If B is already
-     claimed by someone else, do not touch it: `bd update <F> --status blocked
-     --append-notes "needs B, claimed by <assignee>"`, print `RUN_BLOCKED`
-     naming B, and stop.
+     claimed by someone else, do not touch it: requeue F behind it (step 5,
+     "Another bead must be finished first": `<id>` is F, `<blocker>` is B; push
+     anything you committed to `bd/<T>` and never delete that branch), name B
+     and its assignee in the note, and stop.
   4. Fix every point. Tests first for each bug, as in the issue sections below.
      Run the quality gate.
   5. Commit and `git push origin bd/<T>`. Do NOT open a new PR, do NOT
@@ -176,8 +199,9 @@ only. Interactive sessions keep the Conservative profile.
   - resolve a spec conflict by guessing, e.g. an existing test contradicts the
     issue text and you change the test (file it, and say so in the PR body);
   - defer a follow-up, TODO or missing edge case.
-  Create at most 3 new issues per run. New issues do not block your current
-  PR; finish your issue first. Never close or edit issues you did not claim.
+  Create at most 3 new issues per run. A new issue does not block your current
+  one unless it is a real blocker (step 5); otherwise finish your issue first.
+  Never close or edit issues you did not claim.
   List the new ids in the PR body and in your final message. Before creating,
   run `bd list --all` and do not file a duplicate.
 

@@ -4,8 +4,10 @@
 #   . "$HARNESS_HOME/lib/classify.sh"
 #   hermes_classify <logfile> [exit_code]   -> prints ONE class name
 #
-# Classes: OK_DONE QUEUE_EMPTY BLOCKED TIMEOUT MODEL_OOM MODEL_API_ERROR SANDBOX_DOWN
+# Classes: OK_DONE QUEUE_EMPTY BLOCKED REQUEUED TIMEOUT MODEL_OOM MODEL_API_ERROR SANDBOX_DOWN
 #          AUTH_ERROR BEADS_SYNC_ERROR TURN_LIMIT AGENT_STOPPED AGENT_CRASHED NOTES_LOST UNKNOWN
+# REQUEUED: the issue is blocked by another bead; the agent added the edge, released its claim and
+# printed RUN_REQUEUED (bead 35r). With RUN_BLOCKED as well, BLOCKED wins.
 # TURN_LIMIT: the session used its whole tool-call budget without a PR or sentinel: Hermes'
 # "Reached maximum iterations" banner, or the `STOP_REASON:` line hermes-run copies from
 # agent.log (lib/stop_reason.sh) says max_iterations_reached / budget_exhausted / api_calls n/n.
@@ -56,6 +58,7 @@ hermes_classify() {
   fi
   # Sentinels must be a whole line (the prompt/AGENTS text mentions them inline).
   if printf '%s\n' "$tail30" | grep -qE '^RUN_BLOCKED$'; then echo BLOCKED; return 0; fi
+  if printf '%s\n' "$tail30" | grep -qE '^RUN_REQUEUED$'; then echo REQUEUED; return 0; fi
   if printf '%s\n' "$tail30" | grep -qE '^NO_READY_WORK$'; then echo QUEUE_EMPTY; return 0; fi
   # Hermes itself died on an exception: its traceback, no session footer, and an exit that is
   # neither the timeout kill (124, caught above) nor Ctrl-C (130). Before AGENT_CRASHED existed

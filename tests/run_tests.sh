@@ -88,6 +88,8 @@ say "$out" | grep -q '^ACTION=ASK_HUMAN$' && ok "supervise outside a git repo as
 # --- launch: refusals and repo-agnostic command ---
 # herdr/tmux are stubbed to fail so a test can never open a real tab or session.
 mkdir -p "$tmp/nohost"; for c in herdr tmux; do printf '#!/bin/sh\necho "STUB %s called: $*" >> "%s/host_calls.log"\nexit 1\n' "$c" "$tmp" > "$tmp/nohost/$c"; chmod +x "$tmp/nohost/$c"; done
+# docker is stubbed to "up" so the launch tests never depend on this machine's container runtime.
+printf '#!/bin/sh\nexit 0\n' > "$tmp/nohost/docker"; chmod +x "$tmp/nohost/docker"
 # `ps` is stubbed to "no processes" so a REAL Hermes run on this machine cannot affect the tests.
 printf '#!/bin/sh\nexit 0\n' > "$tmp/nohost/ps"; chmod +x "$tmp/nohost/ps"
 export PATH="$tmp/nohost:$PATH"
@@ -145,6 +147,8 @@ say "$out" | grep -q "'$BIN/hermes-run'" && ok "works through a PATH symlink" ||
 . "$HERE/pull_check_tests.sh"
 # --- the "run is active" check ignores test-suite processes (bead 9kc) ---
 . "$HERE/busy_check_tests.sh"
+# --- hermes-launch refuses to start when Docker does not answer (bead 5qy) ---
+. "$HERE/launch_docker_tests.sh"
 
 # --- hermes-run with stubbed hermes/bd/docker ---
 cat > "$tmp/bin/docker" <<'S'

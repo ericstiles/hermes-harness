@@ -8,7 +8,7 @@ on the **current directory's git repo** (or `HERMES_REPO`), never on their own f
 |---|---|
 | `hermes-run [N]` | Work up to N beads issues, one Hermes run each; classify every run; release stale claims after a timeout |
 | `hermes-setup` | Copy the baseline files (shared `AGENTS.md`, `AGENTS_LOCAL.md` stub, `CLAUDE.md` block, `.gitignore` lines) into a target repo; `--check` reports drift. Never touches an existing `AGENTS_LOCAL.md` |
-| `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active or `GH_TOKEN` is unset; warns (never pulls) when the harness checkout is behind `origin/main`, off `main` or dirty (`HERMES_FRESHNESS_CHECK=0` skips, `HERMES_FRESHNESS_TIMEOUT` 10s) |
+| `hermes-launch` | Start `hermes-run` in a herdr tab (tmux fallback); refuses if a run is active, `GH_TOKEN` is unset or Docker does not answer; warns (never pulls) when the harness checkout is behind `origin/main`, off `main` or dirty (`HERMES_FRESHNESS_CHECK=0` skips, `HERMES_FRESHNESS_TIMEOUT` 10s) |
 | `hermes-status [--tests]` | Read-only snapshot: origin/main, PRs, beads, active run, newest log |
 | `hermes-supervise [log]` | Read-only diagnosis: `CLASS=`, `ACTION=`, `NEXT=` |
 | `hermes-pull-check [--no-fetch\|--list]` | Read-only: is `git pull --ff-only` of the harness safe now? `PULL=UP_TO_DATE\|SAFE\|WAIT\|CANNOT`; WAIT when a `hermes-run` loop from this checkout loads a file the pull changes |
@@ -125,7 +125,7 @@ Each setting, with its default and what it does, is in [`templates/envrc.sample`
 `HERMES_RETRY_ON_TIMEOUT`, `HERMES_WRAPUP_TIMEOUT` (15m, 0 disables), `HERMES_UNCLAIM_ON_TIMEOUT`, `HERMES_ARGS`,
 `HERMES_REPO`, `HERMES_LOG_DIR`, `HERMES_TS_MIN_GAP` (2s), `HERMES_STALL_WARN` (10m; 0 = off), `HERMES_CONTEXT_TIMEOUT` (30s, the session export behind the `CONTEXT:` usage line), `HERMES_BASELINE_TIMEOUT` (15s, `hermes prompt-size` behind the `CONTEXT: baseline` line), `HERMES_BEADS_TIMEOUT` (15s, each `bd stats`/`bd ready` behind the `BEADS:` lines and each `bd show`/`bd ready` of the requeue chain), `HERMES_CONTEXT_WINDOW` (context window for the usage line; looked up when unset, never guessed), `HERMES_TEST_CMD` (for `hermes-status --tests`),
 `REVIEWER_GH_TOKEN`, `REVIEWER_AGENT`, `REVIEWER_MODEL`, `OLLAMA_HOST_URL`,
-`HERMES_REVIEW_PYTHON` (for `hermes-review`).
+`HERMES_REVIEW_PYTHON` (for `hermes-review`), `HERMES_DOCKER_TIMEOUT` (15s, the `docker info` check before `hermes-launch` starts a run).
 
 The local reviewer and `hermes-run` share one Ollama. With the same model they share one
 loaded copy; a different `REVIEWER_MODEL` needs memory for both.

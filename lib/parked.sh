@@ -11,9 +11,9 @@ hh_notes_snapshot() { _hh_parked_py snapshot "$1" >/dev/null 2>&1 || rm -f "$1";
 # Park <id>. Sets HH_PARKED (the reason; empty = not parked), HH_PARK_ID (the issue's full id; the
 # claim may have used a short one), HH_PARK_LOG ("PARK: ..." lines), HH_PARK_CHANGED (1 when beads
 # were written and need a push) and HH_PARK_BRANCH (its WIP branch).
-hh_park() { # <id> <snapshot file> <log reference for the note>
+hh_park() { # <id> <snapshot file> <log reference for the note> <the run's pick, may be empty>
   local out last why full
-  out=$(_hh_parked_py park "$1" "$2" "$3")
+  out=$(_hh_parked_py park "$1" "$2" "$3" "${4:-}")
   last=$(printf '%s\n' "$out" | tail -n 1)
   HH_PARKED=""
   why=$(printf '%s\n' "$out" | sed -n 's/^LOG /PARK: /p')

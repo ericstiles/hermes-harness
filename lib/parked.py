@@ -2,9 +2,11 @@
 """parked: after a run ends RUN_BLOCKED, make sure its issue is parked (bead yiv).
 
     parked.py snapshot FILE         # before a run: every issue's status, assignee, notes -> FILE
-    parked.py park ID FILE LOGREF   # after RUN_BLOCKED -> ID <full id>, "LOG <explanation>"
+    parked.py park ID FILE LOGREF PICK
+                                    # after RUN_BLOCKED -> ID <full id>, "LOG <explanation>"
                                     #   lines, CHANGED once beads were written, BRANCH <bd/...>,
-                                    #   then PARKED <the reason> | NOT_PARKED <why>
+                                    #   then PARKED <the reason> | NOT_PARKED <why>. PICK: the
+                                    #   issue the run was told to work, may be empty
 
 Parked means: status blocked, nobody assigned, and a note line starting `BLOCKED:` that this run
 added (told apart from older ones by the snapshot). Whatever the agent left undone is done here.
@@ -12,11 +14,13 @@ added (told apart from older ones by the snapshot). Whatever the agent left undo
 A claim may name a short id, so the issue is shown first and everything else uses its real id.
 Only this run's issue is changed. Nothing is written when the issue was not open before the run, is
 now closed or deferred, is open but assigned (the claim did not take), or when the snapshot is
-missing or does not have it. An assignee it had before the run is kept when the run left the issue
-blocked; one that is in_progress (this run's claim) is released. Writes are at most two
-`bd update`s, status first (bd refuses to reassign another actor's in_progress issue), each pinned
-with --if-status/--if-assignee to what was just read. The caller pushes. Each `bd` call is under
-HERMES_BEADS_TIMEOUT (15s). Exits 0. Python 3.9+, stdlib only.
+missing or does not have it. An issue nobody is assigned to is changed only when it is the PICK:
+the first claim in a log may name an issue the run never held. An assignee it had before the run is
+kept when the run left the issue blocked; one that is in_progress (this run's claim) is released.
+Who added an assignee during the run cannot be told, so someone else's can be removed. Writes are
+at most two `bd update`s, status first (bd refuses to reassign another actor's in_progress issue),
+each pinned with --if-status/--if-assignee to what was just read. The caller pushes. Each `bd` call
+is under HERMES_BEADS_TIMEOUT (15s). Exits 0. Python 3.9+, stdlib only.
 """
 
 from __future__ import annotations
@@ -124,6 +128,16 @@ def wip_branch(bead_id: str, data: dict) -> str:
     return f"bd/{bead_id}"
 
 
+def not_held(bead_id: str, pick: str, assignee: str, parked: bool) -> str:
+    """Why an unassigned issue other than the run's pick is left alone, else an empty string."""
+    if assignee or bead_id == pick or parked:  # parked: nothing is left to write
+        return ""
+    return (
+        f"nobody is assigned to {bead_id} and it is not the issue this run was told to work "
+        f"({pick or 'none was named'}): the run may never have held it, so nothing is changed"
+    )
+
+
 def refusal(bead_id: str, before: Before, status: str, assignee: str) -> str:
     """Why this issue is not this run's to change, else an empty string."""
     if before.status != "open":
@@ -169,19 +183,21 @@ def updates(status: str, assignee: str, release: bool, note: str) -> list[tuple[
     return [*first, *([("--if-status", "blocked", *pin, *rest)] if rest else [])]
 
 
-def park_known(bead_id: str, data: dict, before: Before, logref: str) -> list[str]:
+def park_known(bead_id: str, data: dict, before: Before, logref: str, pick: str) -> list[str]:
     """Park an issue whose state before the run is on record."""
     status = str(data.get("status"))
     assignee = str(data.get("assignee") or "")
     notes = str(data.get("notes") or "")
-    why_not = refusal(bead_id, before, status, assignee)
+    reason = blocked_lines(added_lines(before.notes, notes))
+    why_not = refusal(bead_id, before, status, assignee) or not_held(
+        bead_id, pick, assignee, status == "blocked" and bool(reason)
+    )
     if why_not:
         return [f"NOT_PARKED {why_not}"]
     # an assignee from before the run is kept unless the issue is in_progress (this run's claim)
     keep = bool(assignee) and assignee == before.assignee and status == "blocked"
     out = [f"LOG {bead_id} was assigned to {assignee} before this run: the assignee is kept"]
     out = out if keep else []
-    reason = blocked_lines(added_lines(before.notes, notes))
     note = "" if reason and status == "blocked" else host_note(before, status, notes, logref)
     todo = updates(status, assignee, bool(assignee) and not keep, note)
     written: list[str] = []
@@ -204,7 +220,7 @@ def park_known(bead_id: str, data: dict, before: Before, logref: str) -> list[st
     return [*out, *written, *parked_lines(bead_id, data, reason or note)]
 
 
-def park(claimed: str, snapshot_path: str, logref: str) -> list[str]:
+def park(claimed: str, snapshot_path: str, logref: str, pick: str) -> list[str]:
     """The output lines of `parked.py park`."""
     data = show(claimed)
     bead_id = str(data["id"])  # a claim may use a short id; the snapshot is keyed by the real one
@@ -212,7 +228,7 @@ def park(claimed: str, snapshot_path: str, logref: str) -> list[str]:
     if before is None:
         lines = park_unknown(bead_id, data)
     else:
-        lines = park_known(bead_id, data, before, logref)
+        lines = park_known(bead_id, data, before, logref, pick)
     return [f"ID {bead_id}", *lines]
 
 
@@ -223,13 +239,13 @@ def main(argv: list[str]) -> str:
         except (BeadsError, OSError) as exc:
             raise SystemExit(f"parked.py: {exc}") from None
         return ""
-    if len(argv) == 4 and argv[0] == "park":
+    if len(argv) == 5 and argv[0] == "park":
         bead_id = argv[1]
         try:
-            return "\n".join(park(bead_id, argv[2], argv[3]))
+            return "\n".join(park(bead_id, argv[2], argv[3], argv[4]))
         except (BeadsError, AttributeError, KeyError, TypeError) as exc:
             return f"NOT_PARKED could not park {bead_id} ({exc})"
-    raise SystemExit("usage: parked.py snapshot FILE | park ID FILE LOGREF")
+    raise SystemExit("usage: parked.py snapshot FILE | park ID FILE LOGREF PICK")
 
 
 if __name__ == "__main__":

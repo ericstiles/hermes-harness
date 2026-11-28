@@ -171,6 +171,46 @@ STUB_PULL_FAIL=1 hrun 2
 [ "$(chats)" = 2 ] && parked om-a && ok "blocked: without a working pull the loop still parks" \
   || bad "blocked: no remote" "chats=$(chats) $(say "$out" | grep PARK)"
 
+# a later pull that worked while releasing a timed out claim makes the snapshot just as stale
+two; blocked_run 2 om-a
+printf 'bd update om-a --claim\necho "  \342\224\212 $ bd update om-a --claim --json" >&2\nsleep 15\n' > "$STUB_PLAN/1.sh"
+STUB_PULL_FAIL_AT='1 3' HERMES_RETRY_ON_TIMEOUT=1 RUN_TIMEOUT=2s HERMES_WRAPUP_TIMEOUT=0 hrun 1
+[ "$(chats)" = 2 ] && [ "$(field om-a status)" = in_progress ] && [ -z "$(field om-a notes)" ] \
+  && say "$out" | grep -q '^PARK: the pull before the run failed' && say "$out" | grep -q '^PARK: no record of om-a ' \
+  && ok "not parked: a pull that worked after a timeout also drops the stale snapshot" \
+  || bad "not parked: stale after timeout" "chats=$(chats) $(field om-a status) $(say "$out" | grep -E 'PARK|warning|retrying')"
+
+# --- an issue nobody holds is changed only if it is the one the run was told to work ---
+untouched() { [ "$(field "$1" status)" = open ] && [ -z "$(field "$1" assignee)" ] && [ -z "$(field "$1" notes)" ]; }
+# the log names another issue's claim before the run's own
+two; printf '  \342\224\212 $ echo "bd update om-b --claim"\nRUN_BLOCKED\n\nResume this session with:\n' > "$STUB_PLAN/1"
+printf "bd update om-a --claim\nbd update om-a --status blocked --append-notes '%s'\n" "$WHY" > "$STUB_PLAN/1.sh"
+hrun 3; stops "an unheld issue the run was not told to work" 'nobody is assigned to om-b and it is not the issue this run was told to work (om-a)'
+untouched om-b && ok "not parked: that issue is not touched" || bad "not parked: other issue" "$(field om-b status) $(field om-b notes)"
+# ... also when it is blocked without a note: nothing is added
+two; agent_run 1 om-b RUN_BLOCKED; echo "bd update om-b --status blocked" > "$STUB_PLAN/1.sh"
+hrun 3; stops "an unheld, blocked issue without a note" 'nobody is assigned to om-b'
+[ -z "$(field om-b notes)" ] && ok "not parked: no note is added to it" || bad "not parked: note added" "$(field om-b notes)"
+# without a named issue (the ready list could not be read) an unheld issue is left alone too
+two; agent_run 1 om-a RUN_BLOCKED
+STUB_READY_FAIL=1 hrun 3; stops "an unheld issue when none was named" 'was told to work (none was named)'
+untouched om-a && ok "not parked: it stays open" || bad "not parked: unnamed" "$(field om-a status) $(field om-a notes)"
+# the named issue is still parked when the run left it unheld (a claim that was never pushed)
+two; agent_run 1 om-a RUN_BLOCKED; agent_run 2 om-b NO_READY_WORK
+hrun 2
+[ "$(chats)" = 2 ] && parked om-a && field om-a notes | grep -qF "$HOSTNOTE" \
+  && ok "blocked: the named issue is parked even when nobody holds it" || bad "blocked: unheld pick" "$(field om-a status) $(say "$out" | grep PARK)"
+# another issue the run holds, or already parked properly, still counts
+two; blocked_run 1 om-b "$WHY"; agent_run 2 om-a NO_READY_WORK
+hrun 2
+[ "$(chats)" = 2 ] && parked om-b && ok "blocked: another issue the run holds is parked" \
+  || bad "blocked: held non-pick" "$(field om-b status) $(say "$out" | grep PARK)"
+two; agent_run 1 om-b RUN_BLOCKED; echo "bd update om-b --status blocked --append-notes '$WHY'" > "$STUB_PLAN/1.sh"; agent_run 2 om-a NO_READY_WORK
+hrun 2
+[ "$(chats)" = 2 ] && parked om-b && say "$out" | grep -qxF "PARKED: om-b ($WHY)" && ! grep -q '^bd update om-b --if' "$STUB_LOG" \
+  && ok "blocked: another issue the agent parked itself is accepted, with nothing written" \
+  || bad "blocked: parked non-pick" "$(field om-b status) $(field om-b assignee) $(say "$out" | grep PARK)"
+
 # --- test_blocked_breaker_stops_after_two_in_a_row ---
 two; bead om-c 3 open; blocked_run 1 om-a "$WHY"; blocked_run 2 om-b "$WHY"
 hrun 5
@@ -274,5 +314,9 @@ for f in AGENTS.md templates/AGENTS_WORKFLOW.md; do
 done
 grep -q 'HERMES_CONTINUE_ON_BLOCKED' "$ROOT/README.md" && grep -q 'HERMES_MAX_BLOCKED_IN_A_ROW' "$ROOT/README.md" \
   && ok "docs: README names both settings" || bad "docs: README" "missing"
+
+readme=$(tr '\n' ' ' < "$ROOT/README.md" | tr -s ' ')
+say "$readme" | grep -qF 'nobody is assigned to is changed only if' && say "$readme" | grep -qF 'cannot tell who added an assignee during the run' \
+  && ok "docs: README says which issue is changed and which assignees can be removed" || bad "docs: README limits" "missing"
 
 echo; echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

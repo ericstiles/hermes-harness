@@ -247,13 +247,19 @@ session_id() { # <logfile> -> Hermes session id from the exit footer ("Session: 
   tr -d '\r' < "$1" | sed -n 's/^Session: *\([0-9A-Za-z_]*\)$/\1/p' | tail -n 1
 }
 
+# A pull after the one before the run. If that one failed and this one works, the notes saved in
+# between may predate what it brought in: stale=1, and parking must not trust them (yiv).
+later_pull() {
+  bd dolt pull >/dev/null 2>&1 || return 1
+  [ "$pulled" = 1 ] || stale=1
+}
 # Release a claim left behind by a killed run so the next run can pick it up.
 unclaim_stale() { # <logfile>
   [ "$UNCLAIM" = 1 ] || return 0
   local id
   id=$(claimed_issue "$1")
   [ -n "$id" ] || { echo "note: could not find a claimed issue id in $1"; return 0; }
-  bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; claim state may be stale"
+  later_pull || echo "warning: bd dolt pull failed; claim state may be stale"
   if bd list --status=in_progress 2>/dev/null | grep -q "$id"; then
     if bd unclaim "$id" >/dev/null 2>&1; then
       echo "released stale claim on $id"; bd dolt push >/dev/null 2>&1 || echo "warning: bd dolt push failed (unclaim is local only)"
@@ -494,13 +500,12 @@ blocked_check() {
   case $ref in /*) ref=${ref##*/} ;; esac # never a host path in a bead's notes
   id=$(claimed_issue "${claim_log:-$log}")
   [ -n "$id" ] || { loop_say "PARK: the run claimed no issue, so there is nothing to park"; return 0; }
-  if ! bd dolt pull >/dev/null 2>&1; then
-    loop_say "warning: bd dolt pull failed; parking from local beads"
-  elif [ "$pulled" != 1 ]; then # the snapshot may predate what this pull just brought in
+  later_pull || loop_say "warning: bd dolt pull failed; parking from local beads"
+  if [ "$stale" = 1 ]; then
     rm -f "$NOTES_BEFORE"
     loop_say "PARK: the pull before the run failed, so the notes saved then are not trusted"
   fi
-  hh_park "$id" "$NOTES_BEFORE" "$ref"
+  hh_park "$id" "$NOTES_BEFORE" "$ref" "${run_pick:-}"
   id=$HH_PARK_ID # the full id, whatever the claim command used
   loop_say_lines "$HH_PARK_LOG"
   if [ "$HH_PARK_CHANGED" = 1 ]; then
@@ -592,7 +597,7 @@ for i in $(seq 1 "$MAX"); do
   fi
   stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
   # Which issue this run works, and why: the requeue chain (35r), else the first ready one (66y).
-  pulled=1 # 0: the pull failed, so the snapshot below may be out of date
+  pulled=1; stale=0 # pulled=0: the pull failed, so the snapshot below may be out of date
   bd dolt pull >/dev/null 2>&1 || { pulled=0; echo "warning: bd dolt pull failed; picking from local beads"; }
   [ "$go_on" != 1 ] || hh_notes_snapshot "$NOTES_BEFORE"
   hh_chain_pick; run_pick=$HH_CHAIN_PICK; pick_log=$HH_CHAIN_LOG; iter_prompt=""

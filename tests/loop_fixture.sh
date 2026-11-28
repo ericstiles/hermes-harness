@@ -145,7 +145,7 @@ elif args[:2] == ["dolt", "pull"]:
         with open(os.path.join(db, "om-b.json"), "w") as f:
             json.dump({**beads["om-b"], "blocks": ["om-a"]}, f)
     failing = os.environ.get("STUB_PULL_FAIL") == "1"
-    sys.exit(1 if failing or str(pulls) == os.environ.get("STUB_PULL_FAIL_AT") else 0)
+    sys.exit(1 if failing or str(pulls) in os.environ.get("STUB_PULL_FAIL_AT", "").split() else 0)
 S
 # chat number N runs $STUB_PLAN/N.sh (what the agent does to beads) if there is one, then prints
 # $STUB_PLAN/N (else a run that opens a PR); the prompt is logged

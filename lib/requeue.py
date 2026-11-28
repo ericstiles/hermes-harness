@@ -234,21 +234,32 @@ def pick(
     return log, ""
 
 
-def _timeout() -> float:
+def bd_timeout() -> float:
     match = re.fullmatch(r"(\d+(?:\.\d+)?)([smh]?)", os.environ.get("HERMES_BEADS_TIMEOUT", ""))
     return float(match[1]) * UNITS[match[2]] if match else DEFAULT_TIMEOUT
 
 
-def _bd_json(*args: str) -> list:
-    label = "bd " + " ".join(args[:2] if args[0] == "show" else args[:1])
+def _label(args: tuple[str, ...]) -> str:
+    return "bd " + " ".join(args[:2] if args[0] in ("show", "update") else args[:1])
+
+
+def bd_run(*args: str) -> str:
+    """Run `bd` under HERMES_BEADS_TIMEOUT and return what it printed."""
     try:
-        run = subprocess.run(
-            ["bd", *args, "--json"], capture_output=True, text=True, timeout=_timeout()
-        )
-        if run.returncode != 0:
-            raise BeadsError(f"{label} failed (exit {run.returncode})")
-        data = json.loads(run.stdout.strip() or "[]")  # no output: nothing found
+        run = subprocess.run(["bd", *args], capture_output=True, text=True, timeout=bd_timeout())
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise BeadsError(f"{_label(args)} failed ({type(exc).__name__})") from None
+    if run.returncode != 0:
+        raise BeadsError(f"{_label(args)} failed (exit {run.returncode})")
+    return run.stdout
+
+
+def bd_json(*args: str) -> list:
+    label = _label(args)
+    out = bd_run(*args, "--json")
+    try:
+        data = json.loads(out.strip() or "[]")  # no output: nothing found
+    except ValueError as exc:
         raise BeadsError(f"{label} failed ({type(exc).__name__})") from None
     if not isinstance(data, list):
         raise BeadsError(f"{label} failed (not a JSON list)")
@@ -260,7 +271,7 @@ def bd_fetch() -> Fetch:
 
     def fetch(bead_id: str) -> Bead:
         if bead_id not in cache:
-            data = _bd_json("show", bead_id)
+            data = bd_json("show", bead_id)
             if not data:
                 raise BeadsError(f"bd show {bead_id} failed (no such bead)")
             cache[bead_id] = parse_bead(data[0])
@@ -272,12 +283,12 @@ def bd_fetch() -> Fetch:
 def next_pick() -> list[str]:
     """The output lines of `requeue.py pick`."""
     try:
-        listed = _bd_json("list", "--status=open", "--notes-contains", NOTE, "--limit", "0")
+        listed = bd_json("list", "--status=open", "--notes-contains", NOTE, "--limit", "0")
         requeued = parse_requeued(listed)
         if not requeued:
             return ["NONE"]
         excluded = excluded_labels()
-        queue = parse_queue(_bd_json(*ready_args(excluded), "--limit", "0"))
+        queue = parse_queue(bd_json(*ready_args(excluded), "--limit", "0"))
         log, chosen = pick(requeued, bd_fetch(), queue, excluded)
     except BeadsError as exc:
         log, chosen = [f"could not read the requeue chain ({exc}): picking as usual"], ""
@@ -295,7 +306,7 @@ def normal_pick() -> list[str]:
     """The output lines of `requeue.py normal`: the issue step 1 of the workflow would take."""
     try:
         args = ready_args(excluded_labels())
-        ids = _ids(_bd_json(*args, "--sort", "priority", "--limit", "1"))
+        ids = _ids(bd_json(*args, "--sort", "priority", "--limit", "1"))
     except BeadsError as exc:
         return [f"LOG could not read the ready list ({exc}): Hermes picks in step 1", "NONE"]
     return [f"PICK {ids[0]}" if ids else "NONE"]
@@ -308,7 +319,7 @@ def waiting() -> list[str]:
         return []
     args = ("ready", "--exclude-type", "epic", "--label-any", labels)
     try:
-        ids = _ids(_bd_json(*args, "--sort", "priority", "--limit", "0"))
+        ids = _ids(bd_json(*args, "--sort", "priority", "--limit", "0"))
     except BeadsError as exc:
         return [f"LOG could not list the {labels} issues ({exc})"]
     if not ids:

@@ -352,6 +352,8 @@ child_tests() { # <name> <script>: run a self-contained test file and add up its
 child_tests requeue "$HERE/requeue_tests.sh"
 # --- issues a person must run are never picked (bead 66y); runs standalone too ---
 child_tests "exclude-labels" "$HERE/exclude_labels_tests.sh"
+# --- a blocked issue is parked and the loop goes on (bead yiv); runs standalone too ---
+child_tests "blocked-continue" "$HERE/blocked_continue_tests.sh"
 # --- hermes-review: CLI wrapper + Python unit tests (pytest via uv; skipped without uv) ---
 out=$("$BIN/hermes-review" --help 2>&1)
 say "$out" | grep -q 'reviewer agent for Hermes PRs' && ok "hermes-review --help" || bad "review help" "$out"
@@ -364,7 +366,7 @@ if command -v uv >/dev/null 2>&1; then
   # Lint + format with the repo's ruff.toml (pinned ruff, so results do not drift).
   for lint in "check --output-format concise" "format --check"; do
     # shellcheck disable=SC2086  # $lint is two words on purpose
-    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py lib/context_usage.py lib/bead_stats.py lib/requeue.py tests/py 2>&1); rc=$?
+    out=$(cd "$ROOT" && uvx -q ruff@0.17.6 $lint lib/pr_review lib/hooks lib/watchdog.py lib/context_usage.py lib/bead_stats.py lib/requeue.py lib/parked.py tests/py 2>&1); rc=$?
     [ $rc -eq 0 ] && ok "ruff ${lint%% *}: clean" || bad "ruff ${lint%% *}" "$(echo "$out" | tail -n 20)"
   done
 else

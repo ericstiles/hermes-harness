@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # hermes-run — work up to N beads issues in the CURRENT repo via one-shot Hermes runs.
-# Stops when the queue is empty, an issue is blocked, or a run fails/times out. Also stops,
+# Stops when the queue is empty or a run fails/times out. An issue only a human can unblock is
+# parked and the loop goes on (several blocked runs in a row stop it). Also stops,
 # between runs and never mid-run, when a harness file it loaded changed since it started (a pull,
 # branch switch or edit): it prints HARNESS_CHANGED with the files and the relaunch command,
 # adds LOOP_STOP=HARNESS_CHANGED to the last run log, and ends FINAL_RESULT=HARNESS_CHANGED.
@@ -33,8 +34,9 @@
 #   HERMES_REPO=/path            act on this repo instead of the current directory
 #   HERMES_LOG_DIR=/path         logs (default <repo>/logs; git-ignore it)
 #   HERMES_TS_MIN_GAP=2          seconds of silence before a "(+Ns)" elapsed line
-#   HERMES_BEADS_TIMEOUT=15s     time limit for each `bd` read behind the BEADS: lines, the pick,
-#                                the skip list and the requeue chain (lib/requeue.py)
+#   HERMES_BEADS_TIMEOUT=15s     time limit for each `bd` call behind the BEADS: lines, the pick,
+#                                the skip list, the requeue chain (lib/requeue.py) and parking a
+#                                blocked issue (lib/parked.py)
 #   HERMES_BASELINE_TIMEOUT=15s  time limit for `hermes prompt-size` behind the CONTEXT: baseline line
 #   HERMES_CONTEXT_TIMEOUT=30s   time limit for the session export behind the CONTEXT: line
 #   HERMES_CONTEXT_WINDOW=N      context window for the CONTEXT: line (default: looked up from Hermes
@@ -45,6 +47,9 @@
 #   HERMES_EXCLUDE_LABELS=owner-present  comma separated labels of issues a person must run:
 #                                never picked, listed once per launch ("PICK: skipping ...");
 #                                empty = skip nothing
+#   HERMES_CONTINUE_ON_BLOCKED=1 after RUN_BLOCKED, park the issue and go on with the next one;
+#                                0 = stop at the first blocked issue and leave beads alone
+#   HERMES_MAX_BLOCKED_IN_A_ROW=2  this many blocked runs in a row stop the loop (1 or more)
 #   HERMES_RESUME_ON_STOP=1      when the agent ends its turn mid-issue (no PR, no
 #                                RUN_BLOCKED/RUN_REQUEUED/NO_READY_WORK: class AGENT_STOPPED),
 #                                resume that same session ONCE; 0 disables
@@ -59,7 +64,15 @@
 # this launch and later ones, it reads the requeued issues from beads: one whose blockers are
 # closed is worked first, else its deepest ready blocker or a blocker's review fix, else the
 # first ready issue. "REQUEUE CHAIN:" lines in the run log say why (lib/requeue.sh). A needs-a-human
-# blocker stays RUN_BLOCKED and stops the loop.
+# blocker stays RUN_BLOCKED.
+#
+# Blocked on a human (bead yiv): after RUN_BLOCKED the loop checks on the host that the claimed
+# issue is blocked, unassigned and has a "BLOCKED:" note from this run, and does whatever is
+# missing (lib/parked.sh). It logs "PARKED: <id> (<reason>)" and goes on; at the end
+# "PARKED_ISSUES=<ids>" lists them all and the result is that of the last run that was not parked
+# (OK_DONE when the parked one was last). It stops with FINAL_RESULT=BLOCKED when the issue cannot
+# be parked (no claim, closed, someone else's, bd fails), a requeue was refused, or after
+# HERMES_MAX_BLOCKED_IN_A_ROW blocked runs in a row.
 #
 # Every run's log ends with a line  RUN_RESULT=<CLASS>  (see lib/classify.sh)
 # so hermes-supervise can parse the outcome instead of grepping prose.
@@ -94,6 +107,8 @@ cd "$REPO_ROOT" || exit 2
 . "$HARNESS_HOME/lib/epics.sh"
 # shellcheck source=../lib/requeue.sh
 . "$HARNESS_HOME/lib/requeue.sh" # hh_requeue_accept / hh_chain_pick: the requeue chain (bead 35r)
+# shellcheck source=../lib/parked.sh
+. "$HARNESS_HOME/lib/parked.sh" # hh_notes_snapshot / hh_park: after RUN_BLOCKED (bead yiv)
 # shellcheck source=../lib/code_stamp.sh
 . "$HARNESS_HOME/lib/code_stamp.sh" # hh_code_stamp: stop between runs when the harness code changed
 
@@ -128,6 +143,11 @@ skip_labels=$(hh_exclude_labels) || exit 2
 skip_args=()
 [ -z "$skip_labels" ] || skip_args=(--exclude-label "$skip_labels")
 
+# After RUN_BLOCKED (yiv): park the issue and go on (1), or stop; this many in a row stop anyway.
+go_on=${HERMES_CONTINUE_ON_BLOCKED:-1}
+max_blocked=${HERMES_MAX_BLOCKED_IN_A_ROW:-2}
+[[ $max_blocked =~ ^[1-9][0-9]*$ ]] || { echo "hermes-run: HERMES_MAX_BLOCKED_IN_A_ROW='$max_blocked' is not a whole number of 1 or more" >&2; exit 2; }
+
 # The time limit is enforced by lib/watchdog.py (exit 124 like timeout(1)), not timeout(1).
 WATCHDOG="$HARNESS_HOME/lib/watchdog.py"
 
@@ -153,6 +173,7 @@ export HERMES_HARNESS_CLAIMS="$LOCK/claims"
 # The issues this launch requeued (once each); removed with the lock when the loop ends. The chain
 # itself is read from beads (lib/requeue.sh), so it outlives the launch.
 REQUEUE_HISTORY="$LOCK/requeued"; : > "$REQUEUE_HISTORY"
+NOTES_BEFORE="$LOCK/notes-before.json" # every issue before the current run (lib/parked.sh)
 
 docker info >/dev/null 2>&1 || { echo "Docker daemon not running (try: colima start)" >&2; echo "RUN_RESULT=SANDBOX_DOWN"; exit 2; }
 
@@ -226,13 +247,19 @@ session_id() { # <logfile> -> Hermes session id from the exit footer ("Session: 
   tr -d '\r' < "$1" | sed -n 's/^Session: *\([0-9A-Za-z_]*\)$/\1/p' | tail -n 1
 }
 
+# A pull after the one before the run. If that one failed and this one works, the notes saved in
+# between may predate what it brought in: stale=1, and parking must not trust them (yiv).
+later_pull() {
+  bd dolt pull >/dev/null 2>&1 || return 1
+  [ "$pulled" = 1 ] || stale=1
+}
 # Release a claim left behind by a killed run so the next run can pick it up.
 unclaim_stale() { # <logfile>
   [ "$UNCLAIM" = 1 ] || return 0
   local id
   id=$(claimed_issue "$1")
   [ -n "$id" ] || { echo "note: could not find a claimed issue id in $1"; return 0; }
-  bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; claim state may be stale"
+  later_pull || echo "warning: bd dolt pull failed; claim state may be stale"
   if bd list --status=in_progress 2>/dev/null | grep -q "$id"; then
     if bd unclaim "$id" >/dev/null 2>&1; then
       echo "released stale claim on $id"; bd dolt push >/dev/null 2>&1 || echo "warning: bd dolt push failed (unclaim is local only)"
@@ -448,37 +475,76 @@ save_and_release() { # <log with the claim> [session id]
   unclaim_stale "$1"
 }
 
-# A line about the requeue chain: to the terminal, the last run log and its timed twin.
-requeue_say() { # <line>
+# A line about the loop (requeue, parking): to the terminal, the last run log and its timed twin.
+loop_say() { # <line>
   echo "$1" | tee -a "$log"
   hh_stamp_line "$1" "$STAMP_ID" >> "$timed" 2>/dev/null || true
+}
+loop_say_lines() { # <lines, may be empty>
+  local line
+  [ -n "$1" ] || return 0
+  while IFS= read -r line; do loop_say "$line"; done <<EOF
+$1
+EOF
+}
+# Is <branch> on origin? Asked under the watchdog and without prompts; unknown counts as no.
+branch_on_origin() { # <branch>
+  GIT_TERMINAL_PROMPT=0 python3 "$WATCHDOG" --limit "${HERMES_BEADS_TIMEOUT:-15s}" --extend 0 --grace 2s \
+    --log /dev/null -- git ls-remote --heads origin "refs/heads/$1" 2>/dev/null \
+    | grep -q "^[0-9a-f]\{40,\}[[:space:]]refs/heads/$1\$"
+}
+# A run that ended RUN_BLOCKED (bead yiv): make sure its issue is parked, so no later pick can be
+# it. Sets parked_now=1 and adds the id to parked_ids when it is.
+blocked_check() {
+  local id line ref=${log#"$REPO_ROOT"/}
+  case $ref in /*) ref=${ref##*/} ;; esac # never a host path in a bead's notes
+  id=$(claimed_issue "${claim_log:-$log}")
+  [ -n "$id" ] || { loop_say "PARK: the run claimed no issue, so there is nothing to park"; return 0; }
+  later_pull || loop_say "warning: bd dolt pull failed; parking from local beads"
+  if [ "$stale" = 1 ]; then
+    rm -f "$NOTES_BEFORE"
+    loop_say "PARK: the pull before the run failed, so the notes saved then are not trusted"
+  fi
+  hh_park "$id" "$NOTES_BEFORE" "$ref" "${run_pick:-}"
+  id=$HH_PARK_ID # the full id, whatever the claim command used
+  loop_say_lines "$HH_PARK_LOG"
+  if [ "$HH_PARK_CHANGED" = 1 ]; then
+    bd dolt push >/dev/null 2>&1 || loop_say "warning: bd dolt push failed (the change to $id is local only)"
+  fi
+  [ -n "$HH_PARKED" ] || return 0
+  line="PARKED: $id ($HH_PARKED)"
+  if branch_on_origin "$HH_PARK_BRANCH"; then
+    line="$line | WIP branch $HH_PARK_BRANCH is on origin"
+  fi
+  loop_say "$line"
+  parked_ids="${parked_ids:+$parked_ids }$id"; parked_now=1
 }
 # A REQUEUED run (bead 35r): trust it only if the host's beads agree. Accepted: the loop goes on
 # (later picks read the chain from beads). Refused: the run becomes BLOCKED, and the loop stops.
 requeue_check() {
   local id out blockers
   id=$(claimed_issue "${claim_log:-$log}")
-  bd dolt pull >/dev/null 2>&1 || requeue_say "warning: bd dolt pull failed; checking the requeue against local beads"
+  bd dolt pull >/dev/null 2>&1 || loop_say "warning: bd dolt pull failed; checking the requeue against local beads"
   if ! out=$(hh_requeue_accept "$REQUEUE_HISTORY" "$id"); then
     class=BLOCKED
-    requeue_say "REQUEUE_REFUSED: $out"
-    requeue_say "REQUEUE CHAIN: the run counts as BLOCKED; beads are left as the agent left them (bd show ${id:-<id>})"
-    requeue_say "RUN_RESULT=BLOCKED"
+    loop_say "REQUEUE_REFUSED: $out"
+    loop_say "REQUEUE CHAIN: the run counts as BLOCKED; beads are left as the agent left them (bd show ${id:-<id>})"
+    loop_say "RUN_RESULT=BLOCKED"
     return 0
   fi
   blockers=${out%% *}
   requeued_pairs="${requeued_pairs:+$requeued_pairs }$id->$blockers"
-  requeue_say "REQUEUE: $id blocked by $blockers"
+  loop_say "REQUEUE: $id blocked by $blockers"
   case $out in
     *" UNNOTED") # the note is what later launches find the issue by
       if bd update "$id" --append-notes "REQUEUED: blocked by $blockers (note added by hermes-run)" >/dev/null 2>&1; then
-        requeue_say "REQUEUE CHAIN: $id had no REQUEUED note; added it so later launches remember it"
-        bd dolt push >/dev/null 2>&1 || requeue_say "warning: bd dolt push failed (the note is local only)"
+        loop_say "REQUEUE CHAIN: $id had no REQUEUED note; added it so later launches remember it"
+        bd dolt push >/dev/null 2>&1 || loop_say "warning: bd dolt push failed (the note is local only)"
       else
-        requeue_say "warning: could not add the REQUEUED note to $id; later picks will not give it priority"
+        loop_say "warning: could not add the REQUEUED note to $id; later picks will not give it priority"
       fi ;;
   esac
-  requeue_say "REQUEUE CHAIN: $id is open again; it is taken first once $blockers is closed (its PR merged)"
+  loop_say "REQUEUE CHAIN: $id is open again; it is taken first once $blockers is closed (its PR merged)"
 }
 # Lines saying why this run's issue was chosen or skipped; run_once writes them into its log.
 add_pick_log() { # <lines, may be empty>
@@ -489,13 +555,10 @@ add_pick_log() { # <lines, may be empty>
 }
 # At the loop's end: what is still waiting and what the next launch will start with.
 requeue_state() {
-  local line
   hh_chain_pick
   [ -n "$HH_CHAIN_LOG" ] && [ -n "${log:-}" ] || return 0
-  requeue_say "REQUEUE CHAIN: state at the end of this loop (the next launch starts from it):"
-  while IFS= read -r line; do requeue_say "$line"; done <<EOF
-$HH_CHAIN_LOG
-EOF
+  loop_say "REQUEUE CHAIN: state at the end of this loop (the next launch starts from it):"
+  loop_say_lines "$HH_CHAIN_LOG"
 }
 
 # The loop's end: summary lines, then exit by the final result. A function, so a loop that stops
@@ -503,7 +566,8 @@ EOF
 loop_epilogue() {
   loop_end=$(date +%s)
   requeue_state
-  _beads_line summary ${WORKED:-} ${requeued_pairs:+--requeued $requeued_pairs}
+  _beads_line summary ${WORKED:-} ${requeued_pairs:+--requeued $requeued_pairs} ${parked_ids:+--parked $parked_ids}
+  [ -z "$parked_ids" ] || loop_say "PARKED_ISSUES=${parked_ids// /,}" # hermes-supervise reads it
   echo "RUN_TIME total=$(hh_elapsed $((loop_end - loop_start))) start=$(hh_hms "$loop_start") end=$(hh_hms "$loop_end") runs=$runs"
   echo "FINAL_RESULT=$final"
   case "$final" in OK_DONE|QUEUE_EMPTY|REQUEUED) exit 0 ;; *) exit 1 ;; esac
@@ -525,6 +589,7 @@ harness_changed() { # <changed paths> <next run number>: say why, mark the last 
 final=OK_DONE; WORKED=""  # beads claimed by this loop's main runs (BEADS: summary)
 requeued_pairs=""; run_pick=""; pick_log=""; iter_prompt="" # "<id>-><blockers>" accepted; this run's pick
 skips_listed=0 # 1 once the issues skipped for a person have been listed: once per launch
+parked_ids=""; blocked_row=0 # issues parked in this launch; BLOCKED runs in a row
 loop_start=$(date +%s); runs=0
 for i in $(seq 1 "$MAX"); do
   if [ "$i" -gt 1 ] && changed=$(hh_code_changes "$HARNESS_HOME" "$CODE_STAMP"); then
@@ -532,7 +597,9 @@ for i in $(seq 1 "$MAX"); do
   fi
   stopped_log=""; sid=""; iter_start=$(date +%s); : > "$HERMES_HARNESS_CLAIMS"
   # Which issue this run works, and why: the requeue chain (35r), else the first ready one (66y).
-  bd dolt pull >/dev/null 2>&1 || echo "warning: bd dolt pull failed; picking from local beads"
+  pulled=1; stale=0 # pulled=0: the pull failed, so the snapshot below may be out of date
+  bd dolt pull >/dev/null 2>&1 || { pulled=0; echo "warning: bd dolt pull failed; picking from local beads"; }
+  [ "$go_on" != 1 ] || hh_notes_snapshot "$NOTES_BEFORE"
   hh_chain_pick; run_pick=$HH_CHAIN_PICK; pick_log=$HH_CHAIN_LOG; iter_prompt=""
   if [ -z "$run_pick" ]; then hh_normal_pick; run_pick=$HH_PICK; add_pick_log "$HH_PICK_LOG"; fi
   if [ "$skips_listed" = 0 ]; then
@@ -580,10 +647,14 @@ for i in $(seq 1 "$MAX"); do
     fi
   fi
   [ "$class" = OK_DONE ] && notes_check
+  # only the agent's own RUN_BLOCKED is parked: a refused requeue (below) stops the loop as before
+  parked_now=0; park=0; [ "$class" = BLOCKED ] && park=$go_on
   [ "$class" = REQUEUED ] && requeue_check
   final=$class
   done_id=$(claimed_issue "$claim_log")
   echo "== run $i/$MAX completed: $class (issue ${done_id:-none})" # the final result (bead iqf)
+  [ "$park" != 1 ] || blocked_check
+  if [ "$class" = BLOCKED ]; then blocked_row=$((blocked_row + 1)); else blocked_row=0; fi
   case "$class" in
     OK_DONE|REQUEUED) continue ;;
     NOTES_LOST) echo "The PR's bead lost its PR link (NOTES_CHECK lines above); hermes-review would refuse the PR — stopping. See $log"; break ;;
@@ -597,7 +668,13 @@ for i in $(seq 1 "$MAX"); do
         continue
       fi
       echo "Queue empty."; final=QUEUE_EMPTY; break ;;
-    BLOCKED) echo "Issue blocked — stopping. See $log"; break ;;
+    BLOCKED)
+      [ "$parked_now" = 1 ] || { echo "Issue blocked — stopping. See $log"; break; }
+      if [ "$blocked_row" -ge "$max_blocked" ]; then
+        loop_say "Blocked $blocked_row runs in a row — stopping: likely a systemic problem (sandbox, auth, environment). See $log"
+        break
+      fi
+      final=OK_DONE; continue ;;
     MODEL_API_ERROR) echo "Agent made no progress (model/API error) — stopping. See $log"; break ;;
     MODEL_OOM) echo "The model server ran out of memory — stopping; a relaunch would hit the same wall. Fix one, then relaunch: free memory (quit other apps), restart the model server, lower the context (model.context_length / the server's --context-window), or use a q8 KV cache. See $log"; break ;;
     TIMEOUT) echo "Run timed out — stopping. See $log"; break ;;

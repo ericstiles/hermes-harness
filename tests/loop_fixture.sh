@@ -31,6 +31,13 @@ for path in glob.glob(os.path.join(db, "*.json")):
     beads[bead["id"]] = bead
 
 
+# `show` and `update` take a short id (without the prefix) as bd does
+if args[:1] in (["show"], ["update"]) and args[1] not in beads:
+    found = [i for i in beads if i.split("-", 1)[-1] == args[1]]
+    if len(found) == 1:
+        args = [args[0], found[0], *args[2:]]
+
+
 def dep(i, kind):
     b = beads[i]
     return {"id": i, "status": b["status"], "priority": b["priority"], "dependency_type": kind}
@@ -40,6 +47,8 @@ def full(b):
     deps = [dep(i, "blocks") for i in b.get("blocks", [])]
     if b.get("parent"):
         deps.append(dep(b["parent"], "parent-child"))
+    if b.get("origin"):
+        deps.append(dep(b["origin"], "discovered-from"))
     return {**b, "title": "title " + b["id"], "dependencies": deps}
 
 
@@ -59,11 +68,33 @@ if args[:1] == ["list"] and "--notes-contains" in args:
         flat(b) for b in beads.values()
         if text in b.get("notes", "") and ("--status=open" not in args or b["status"] == "open")
     ]))
-elif args[:1] == ["update"] and args[2:3] == ["--append-notes"]:
-    path = os.path.join(db, args[1] + ".json")
-    old = beads[args[1]].get("notes", "")
-    with open(path, "w") as f:
-        json.dump({**beads[args[1]], "notes": (old + "\n" if old else "") + args[3]}, f)
+elif args[:1] == ["update"]:
+    if os.environ.get("STUB_UPDATE_FAIL") == "1" and "--claim" not in args:
+        sys.exit(1)
+    held = beads[args[1]].get("assignee", "")
+    actor = os.environ.get("BEADS_ACTOR") or "host"
+    for flag, now in (("--if-status", beads[args[1]]["status"]), ("--if-assignee", held)):
+        if flag in args and args[args.index(flag) + 1] != now:
+            sys.exit(13)
+    if "--claim" in args and held not in ("", "hermes"):
+        sys.exit(1)  # already assigned to someone else
+    if "--assignee" in args and beads[args[1]]["status"] == "in_progress" and held not in ("", actor):
+        sys.exit(1)  # cannot reassign: held by someone else
+    changes = {}
+    if "--claim" in args:
+        changes.update(status="in_progress", assignee="hermes")
+    for flag, key in (("--status", "status"), ("--assignee", "assignee")):
+        if flag in args:
+            changes[key] = args[args.index(flag) + 1]
+    if "--append-notes" in args:
+        old = beads[args[1]].get("notes", "")
+        changes["notes"] = (old + "\n" if old else "") + args[args.index("--append-notes") + 1]
+    with open(os.path.join(db, args[1] + ".json"), "w") as f:
+        json.dump({**beads[args[1]], **changes}, f)
+elif args[:1] == ["list"] and "--all" in args:
+    if os.environ.get("STUB_SNAPSHOT_FAIL") == "1":
+        sys.exit(1)
+    print(json.dumps([flat(b) for b in beads.values()]))
 elif args[:1] == ["show"]:
     if args[1] not in beads:
         sys.exit(1)
@@ -105,15 +136,19 @@ elif args[:1] == ["ready"]:
             print("o", b["id"], "title", b["id"])
 elif args[:1] == ["stats"]:
     print('{"summary": {"ready_issues": 1, "total_issues": 3}}')
+elif args[:2] == ["dolt", "push"]:
+    sys.exit(1 if os.environ.get("STUB_PUSH_FAIL") == "1" else 0)
 elif args[:2] == ["dolt", "pull"]:
     with open(os.environ["STUB_LOG"]) as log:
         pulls = sum(line.startswith("bd dolt pull") for line in log)
     if str(pulls) == os.environ.get("STUB_CYCLE_AT_PULL"):
         with open(os.path.join(db, "om-b.json"), "w") as f:
             json.dump({**beads["om-b"], "blocks": ["om-a"]}, f)
-    sys.exit(1 if os.environ.get("STUB_PULL_FAIL") == "1" else 0)
+    failing = os.environ.get("STUB_PULL_FAIL") == "1"
+    sys.exit(1 if failing or str(pulls) in os.environ.get("STUB_PULL_FAIL_AT", "").split() else 0)
 S
-# chat number N prints $STUB_PLAN/N (else a run that opens a PR); the prompt is logged
+# chat number N runs $STUB_PLAN/N.sh (what the agent does to beads) if there is one, then prints
+# $STUB_PLAN/N (else a run that opens a PR); the prompt is logged
 cat > "$tmp/bin/hermes" <<'S'
 #!/bin/sh
 [ "$1" = config ] && { echo stub; exit 0; }
@@ -122,12 +157,24 @@ for last; do :; done
 echo "PROMPT: $last" >> "$STUB_LOG"
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$STUB_COUNT"
 [ -n "${STUB_TOUCH:-}" ] && echo "# changed mid-run" >> "$STUB_TOUCH"
+[ -f "$STUB_PLAN/$n.sh" ] && sh "$STUB_PLAN/$n.sh" >/dev/null
 if [ -f "$STUB_PLAN/$n" ]; then cat "$STUB_PLAN/$n"
 else echo "PR https://github.com/o/r/pull/1"; echo; echo "Resume this session with:"; fi
 exit 0
 S
 printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/docker"; printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ps"
 printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
+# git is real, except `ls-remote` (no network): the branches in STUB_BRANCHES are on the remote
+{ printf '#!/bin/sh\nreal=%s\n' "$(command -v git)"
+  cat <<'S'
+[ "$1" = ls-remote ] || exec "$real" "$@"
+echo "git $*" >> "$STUB_LOG"
+for b in ${STUB_BRANCHES:-}; do
+  [ "$4" = "refs/heads/$b" ] && printf '%040d\trefs/heads/%s\n' 1 "$b"
+done
+exit 0
+S
+} > "$tmp/bin/git"
 chmod +x "$tmp/bin/"*
 export PATH="$tmp/bin:$PATH"
 

@@ -35,6 +35,10 @@
 #                    the issues that were left run on the new code; the LOOP_STOP line is shown
 #                    either way.
 #   AUTH_ERROR / BLOCKED / UNKNOWN   ASK_HUMAN with evidence.
+#   PARKED_ISSUES= in the run log (issues hermes-run parked as blocked and went on from): one
+#                    "evidence: bd show <id>" line each, and ASK_HUMAN where the answer would be
+#                    DONE. An AUTO_RELAUNCH, or another reason to ask, keeps its ACTION/NEXT/WHY and
+#                    lists the issues as ALSO=<ids>.
 #   NOTES_LOST       ASK_HUMAN with the bd commands that restore the PR link.
 # Hard limit: 3 automatic relaunches per issue per day (counted in
 # <logs>/.relaunches, written by hermes-launch). Never prints GH_TOKEN.
@@ -139,10 +143,16 @@ case "$class" in
     why="the run opened its PR but the bead lost its PR link, so hermes-review will refuse the PR. Check with bd show, then repair: ${fixes:-see the NOTES_CHECK lines}" ;;
   *)          why="unclassified; read the evidence" ;;
 esac
+# issues the loop parked as blocked (bead yiv); went_on=1 when the last run's issue was parked: its
+# log then has the PARKED: line (a resumed run's log has no claim to match against the list)
+parked=""; [ "$class" = RUNNING ] || parked=$(tr -d '\r' < "$log" | sed -n 's/^PARKED_ISSUES=//p' | tail -n 1)
+went_on=0
+if [ "$class" = BLOCKED ] && [ -n "$parked" ] && tr -d '\r' < "$log" | grep '^PARKED: ' >/dev/null; then went_on=1; fi
 # hermes-run stopped the loop between runs because its own code changed (bead eyx)
 loop_stop=$(tr -d '\r' < "$log" | sed -n 's/^LOOP_STOP=//p' | tail -n 1)
-if { [ "$class" = OK_DONE ] || [ "$class" = REQUEUED ]; } && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
+if { [ "$class" = OK_DONE ] || [ "$class" = REQUEUED ] || [ "$went_on" = 1 ]; } && [ "${loop_stop%% *}" = HARNESS_CHANGED ]; then
   did="opened a PR"; [ "$class" = REQUEUED ] && did="requeued its issue"
+  [ "$class" = BLOCKED ] && did="parked its issue"
   left=$(printf '%s\n' "$loop_stop" | sed -n 's/.* left=\([0-9][0-9]*\).*/\1/p')
   files=$(printf '%s\n' "$loop_stop" | sed -n 's/.* files=//p')
   # the per-issue counter cannot see these relaunches (no --issue): count them on their own
@@ -156,6 +166,17 @@ if { [ "$class" = OK_DONE ] || [ "$class" = REQUEUED ]; } && [ "${loop_stop%% *}
   fi
 fi
 
+also=""
+if [ -n "$parked" ]; then
+  if [ "$action" = DONE ] || { [ "$went_on" = 1 ] && [ -z "$loop_stop" ]; }; then
+    action=ASK_HUMAN
+    why="the loop parked ${parked//,/ } as blocked: each needs a person. Read its BLOCKED: note with the bd show lines below, then unblock or close it"
+    if tr -d '\r' < "$log" | grep -q '^Blocked [0-9]* runs in a row'; then
+      why="$why. The loop stopped after blocked runs in a row: check the sandbox, auth and environment first"
+    fi
+  else also=$parked; fi
+fi
+
 echo "CLASS=$class"; echo "ISSUE=${issue:-unknown}"; echo "LOG=$log"
 echo "ACTION=$action"; [ -n "$next" ] && echo "NEXT=$next"; echo "WHY=$why"
 [ -n "$loop_stop" ] && echo "LOOP_STOP=$loop_stop"
@@ -163,5 +184,7 @@ echo "ACTION=$action"; [ -n "$next" ] && echo "NEXT=$next"; echo "WHY=$why"
 # the time-limit watchdog's last decision (EXTENDED / NO_PROGRESS / CAP_REACHED / TIME_LIMIT)
 wd=$(tr -d '\r' < "$work_log" | grep '^WATCHDOG: ' | tail -n 1); [ -n "$wd" ] && echo "WATCHDOG=$wd"
 echo "relaunches_today=$relaunches"
+[ -n "$also" ] && echo "ALSO=$also"
+for p in ${parked//,/ }; do echo "evidence: bd show $p"; done
 echo "--- evidence (last 12 lines, CR stripped)"; tail -n 12 "$log" | tr -d '\r' | sed 's/^/  /'
 exit 0
